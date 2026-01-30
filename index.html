@@ -1435,7 +1435,6 @@ async function processQueue(localToken){
     }
   }finally{
     queueBusy = false;
-    /* ★ 이벤트 실행이 끝나면 즉시 다시 인식 시작(0.5초 기다리지 않도록 타임스탬프 초기화) ★ */
     try{ panelLastDetectTs = 0; }catch(_){}
     try{ overlayLastDetectTs = 0; }catch(_){}
   }
@@ -1586,9 +1585,12 @@ const FACE_FAR_EYE_DIST  = 55;   // 이 값보다 작으면 멀리 있음
 const FACE_NEAR_EYE_DIST = 120;  // 이 값보다 크면 가까이 있음
 
 /* ★ 얼굴 방향 판정(필요시 조절) ★ */
-const YAW_TH = 0.26;        // 좌/우 민감도(0~1)
-const PITCH_Z_TH = 0.03;    // 위/아래 민감도(z 차이)
-const PITCH_Z_SCALE = 0.09; // z 정규화 스케일
+const YAW_TH = 0.26; // 좌/우 민감도(0~1)
+
+/* ★★★ 정면(특히 위/아래) 범위 +10%: 위/아래 민감도 낮추기 ★★★ */
+const FRONT_UPDOWN_DEADZONE_BOOST = 1.10;
+const PITCH_Z_TH = 0.03 * FRONT_UPDOWN_DEADZONE_BOOST; // 기존 0.03 → 0.033
+const PITCH_Z_SCALE = 0.09; // z 정규화 스케일(유지)
 
 let camStream = null, camOn = false, camRAF = null;
 
@@ -1638,7 +1640,7 @@ async function startCam(){
     updateCamUi();
     updateDigitReadout(null);
     updateFaceDistHint('—');
-    await ensureOcr(); /* 함수명 유지 */
+    await ensureOcr();
     startDetectLoop();
     log('🎥 카메라 켜짐');
   }catch(e){
@@ -1668,7 +1670,7 @@ function stopCam(){
 camToggle.onclick = ()=> camOn ? stopCam() : startCam();
 
 /* ===== 얼굴 방향 인식 준비(함수/변수명은 원본 흐름 유지) ===== */
-let ocrWorker = null;   // FaceMesh 인스턴스 저장
+let ocrWorker = null;
 let ocrReady = false;
 let ocrBusy = false;
 let faceLastResults = null;
@@ -1810,7 +1812,7 @@ function classifyFaceDirectionFromLandmarks(lms, vw, vh){
 
   // yaw: 코가 양 볼 사이에서 얼마나 치우쳤는지 (화면 기준)
   const denom = (rc.x - lc.x);
-  let yaw = 0; // -1..1 (음수: 왼쪽, 양수: 오른쪽)
+  let yaw = 0; // -1..1
   if(Math.abs(denom) > 1e-4){
     const pos = (nose.x - lc.x) / denom;   // 0..1
     yaw = (pos - 0.5) * 2;                // -1..1
@@ -1818,11 +1820,10 @@ function classifyFaceDirectionFromLandmarks(lms, vw, vh){
   }
   const yawStrength = Math.abs(yaw);
 
-  // pitch: 턱/이마 z 차이로 위/아래 추정 (MediaPipe z는 상대값)
+  // pitch: 턱/이마 z 차이로 위/아래 추정
   const dz = (ch.z - fh.z);
   const pitchStrength = clamp01(Math.abs(dz) / Math.max(1e-6, PITCH_Z_SCALE));
 
-  // 결정(5가지): 정면/위/아래/왼쪽/오른쪽
   let code='F_FRONT', label='정면';
   let strength = clamp01(1 - Math.max(yawStrength, pitchStrength));
 
@@ -1830,9 +1831,12 @@ function classifyFaceDirectionFromLandmarks(lms, vw, vh){
 
   if(yawStrength >= YAW_TH || pitchStrength >= pitchThNorm){
     if(yawStrength >= pitchStrength){
-      if(yaw < -YAW_TH){ code='F_LEFT';  label='왼쪽';  strength = clamp01(yawStrength); }
-      else if(yaw >  YAW_TH){ code='F_RIGHT'; label='오른쪽'; strength = clamp01(yawStrength); }
+
+      /* ★★★ 요청: 왼쪽/오른쪽 반대로(스왑) ★★★ */
+      if(yaw < -YAW_TH){ code='F_RIGHT'; label='오른쪽'; strength = clamp01(yawStrength); }
+      else if(yaw >  YAW_TH){ code='F_LEFT'; label='왼쪽'; strength = clamp01(yawStrength); }
       else { code='F_FRONT'; label='정면'; strength = clamp01(1 - Math.max(yawStrength, pitchStrength)); }
+
     }else{
       if(dz < -PITCH_Z_TH){ code='F_UP';   label='위';   strength = clamp01(pitchStrength); }
       else if(dz > PITCH_Z_TH){ code='F_DOWN'; label='아래'; strength = clamp01(pitchStrength); }
@@ -1842,8 +1846,6 @@ function classifyFaceDirectionFromLandmarks(lms, vw, vh){
 
   const dist = faceDistanceInfo(lms, vw, vh);
   const sizeScore = (dist.cat==='OK') ? 1 : (dist.cat==='UNKNOWN' ? 0.75 : 0.6);
-
-  // conf: 방향 강도 + 거리(가까움/멀어짐)에 대한 가중치
   const conf = clamp01(0.75*strength + 0.25*sizeScore) * 100;
 
   return {
@@ -1851,9 +1853,7 @@ function classifyFaceDirectionFromLandmarks(lms, vw, vh){
     conf,
     distanceText: dist.text,
     distanceCat: dist.cat,
-    eyeDist: dist.eyeDist,
-    _yaw: yaw,
-    _dz: dz
+    eyeDist: dist.eyeDist
   };
 }
 
@@ -1869,13 +1869,11 @@ async function runOcrOnVideo(video, fullFrame=false){
 
   ocrBusy = true;
   try{
-    // 1) 원본 ROI로 시도
     preprocessToOcrCanvas(video, rect, 0);
     faceLastResults = null;
     await ocrWorker.send({ image: ocrCvs });
     let r = faceLastResults;
 
-    // 2) 얼굴이 안 잡히면 → 약한 보정
     if(!r || !r.multiFaceLandmarks || !r.multiFaceLandmarks.length){
       preprocessToOcrCanvas(video, rect, 1);
       faceLastResults = null;
@@ -1883,7 +1881,6 @@ async function runOcrOnVideo(video, fullFrame=false){
       r = faceLastResults;
     }
 
-    // 3) 그래도 안 잡히면 → 강한 보정
     if(!r || !r.multiFaceLandmarks || !r.multiFaceLandmarks.length){
       preprocessToOcrCanvas(video, rect, 2);
       faceLastResults = null;
@@ -1905,9 +1902,9 @@ async function runOcrOnVideo(video, fullFrame=false){
 
     return {
       status:'ok',
-      digit: g.label,          // UI 표시 값
-      conf: g.conf,            // %
-      gesture: g.code,         // 이벤트 키
+      digit: g.label,
+      conf: g.conf,
+      gesture: g.code,
       distanceText: g.distanceText
     };
   }catch(e){
@@ -1934,7 +1931,7 @@ let panelLastDetectTs = 0;
 let overlayLastDetectTs = 0;
 
 /* 로그 과도 방지(방향이 바뀌거나 1.5초마다만 기록) */
-let lastStateKey = null;   // "gesture" 또는 "NONE"
+let lastStateKey = null;
 let lastLogTs = 0;
 
 function handleDigitPipeline(res, source){
@@ -1944,7 +1941,6 @@ function handleDigitPipeline(res, source){
     return;
   }
 
-  // 거리 표시(요청: 상단 작은 글씨)
   const distText = (res && res.distanceText) ? res.distanceText : (res.status==='no-face' ? '얼굴 없음' : '—');
   if(source === 'panel'){
     updateFaceDistHint(distText);
@@ -1952,13 +1948,11 @@ function handleDigitPipeline(res, source){
     try{ updateOverlayFaceDistHint(distText); }catch(_){}
   }
 
-  // 패널/오버레이 표시값 갱신
   if(source === 'panel'){
     if(res.status==='ok' && res.digit!=null) updateDigitReadout(res.digit);
     else updateDigitReadout(null);
   }
 
-  // currentKey
   let currentKey = (res.status === 'ok' && res.gesture) ? String(res.gesture) : 'NONE';
   const now = performance.now();
   const shouldLog = (currentKey !== lastStateKey) || (now - lastLogTs > 1500);
@@ -1981,7 +1975,6 @@ function handleDigitPipeline(res, source){
     log(`${prefix} ② 이벤트 확인중: ${label}`);
   }
 
-  // 인식 성공이 아니면 종료
   if(res.status !== 'ok' || !res.gesture){
     return;
   }
@@ -1995,10 +1988,8 @@ function handleDigitPipeline(res, source){
     return;
   }
 
-  // ★ 이벤트 실행 중에는 인식/트리거 중지 (요청) ★
   if(queueBusy) return;
 
-  // ★ 0.5초 단위로 계속 인식 → 이벤트 실행 (같은 방향도 반복 실행 가능) ★
   triggerEvent(String(res.gesture), conf, source);
 }
 
@@ -2019,7 +2010,6 @@ function startDetectLoop(){
 
     const allowPanelOcr = !isFullscreenRun;
 
-    // ★ 이벤트 실행 중에는 인식 중지(큐 폭주 방지) ★
     if(allowPanelOcr && !queueBusy){
       const now = performance.now();
       if(now - panelLastDetectTs >= DETECT_PERIOD_MS){
@@ -2152,7 +2142,6 @@ async function startOverlayEyes(){
       return;
     }
 
-    // ★ 이벤트 실행 중에는 인식 중지(요청) ★
     if(!queueBusy){
       const now = performance.now();
       if(now - overlayLastDetectTs >= DETECT_PERIOD_MS){

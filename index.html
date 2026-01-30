@@ -2,10 +2,155 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
-<title>XROBO BLE</title>
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>XROBO BLE — 얼굴 방향 인식 Edition (ROI / 0.5초 주기)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
 <script src="https://unpkg.com/blockly/blockly.min.js"></script>
+<!-- Tesseract.js (원본 유지: 다른 기능 변경 금지 조건 충족) -->
+<script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
+
+<!-- ★ 얼굴 방향 인식: MediaPipe FaceMesh 추가 ★ -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+
 <style>
+
+/* === 전체화면 실행 시: 영상 크게, 로그 조금 작게 === */
+#playOverlay .body{
+  display:grid;
+  grid-template-columns: minmax(0, 2.6fr) minmax(260px, 1fr); /* 왼쪽(영상) : 오른쪽(로그) */
+  gap:0;
+  height:100%;
+}
+
+/* 전체화면 카메라 래퍼 */
+#playOverlay #ovCamWrap{
+  position:relative;
+  width:100%;
+  height:100%;
+  background:#000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+/* 전체화면 카메라 영상 */
+#playOverlay #ovCamWrap video#eyesCam{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  background:#000;
+  transform: scaleX(-1);
+}
+
+/* 오른쪽 전체화면 로그 패널 */
+#playOverlay .ov-right-panel{
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+  background:#0b0f14;
+  border-left:1px solid #123;
+}
+#playOverlay .ov-header{
+  padding:10px 12px;
+  font-weight:600;
+  color:#b7d7ff;
+  border-bottom:1px solid #123;
+}
+#playOverlay .ov-log{
+  flex:1 1 auto;
+  overflow:auto;
+  padding:10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size:13px;
+  line-height:1.4;
+  color:#d3e6ff;
+  background:#0b0f14;
+}
+
+/* 전체화면용 인식 투명 사각형 */
+#ovCamWrap #ovFocusBox{
+  position:absolute;
+  left:50%;
+  top:50%;
+  width:70%;
+  height:70%;
+  max-width:90%;
+  max-height:90%;
+  transform: translate(-50%,-50%);
+  border:2px solid rgba(255,255,255,.9);
+  border-radius:10px;
+  box-shadow:0 0 0 2px rgba(0,0,0,.25), 0 0 18px rgba(0,255,220,.35);
+  pointer-events:none;
+  z-index:1;
+  opacity:.18;
+}
+
+/* 전체화면 배지 (캠 화면 아래쪽) */
+#ovCamWrap #overlayDigitBadge{
+  position:absolute;
+  left:50%;
+  transform:translateX(-50%);
+  bottom:12px;
+  z-index:2;
+  display:inline-flex;
+  align-items:center;
+  gap:.55rem;
+  font: 800 13px/1 system-ui;
+  color:#fff;
+  padding:.48rem .8rem;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.35);
+  background:rgba(0,0,0,.35);
+  backdrop-filter: blur(6px);
+}
+#overlayDigitBadge .label{
+  opacity:.7;
+  font-size:12px;
+}
+#overlayDigitBadge .value{
+  font: 900 18px/1.1 ui-monospace, Menlo, Consolas, monospace;
+  padding: 2px 8px;
+  border-radius:8px;
+  background: rgba(255,255,255,.12);
+  box-shadow: 0 0 0 2px rgba(255,255,255,.18) inset;
+}
+
+/* ★ 얼굴 거리 안내(화면 위쪽 작은 글씨) ★ */
+.camDistHint{
+  position:absolute;
+  left:50%;
+  top:12px;
+  transform:translateX(-50%);
+  z-index:3;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font: 700 11px/1 system-ui;
+  letter-spacing:.2px;
+  color:#fff;
+  padding:.30rem .60rem;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.28);
+  background:rgba(0,0,0,.28);
+  backdrop-filter: blur(6px);
+  pointer-events:none;
+  opacity:.95;
+}
+
+@media (max-width:880px){
+  /* 작은 화면에서는 위:영상 / 아래:로그 (로그 높이 약 180~220px) */
+  #playOverlay .body{
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1.7fr) minmax(180px, .9fr);
+  }
+  #playOverlay .ov-right-panel{
+    border-left:none;
+    border-top:1px solid #123;
+  }
+}
+
+/* 눈동자 애니메이션은 숨기고, ROI 박스는 사용 */
+#eyesStage{display:none !important;}
+
   :root{
     --pad:10px;
     --uiScale: 1;
@@ -18,22 +163,35 @@
     --logH: 180px;
     --blue: #1d4ed8;
 
-    /* 핸들/삼각형 */
     --handleWBase: 22;
     --handleHBase: 28;
     --triWBase:   14;
     --triHBase:   12;
 
-    /* 계산값 */
     --handleW: calc(var(--handleWBase) * var(--uiScale) * 1px);
     --handleH: calc(var(--handleHBase) * var(--uiScale) * 1px);
     --triW:    calc(var(--triWBase)    * var(--uiScale) * 1px);
     --triH:    calc(var(--triHBase)    * var(--uiScale) * 1px);
     --linkBar: calc(3 * var(--uiScale) * 1px);
+
+    --keyW: clamp(52px, 8vmin, 92px);
+    --keyH: calc(var(--keyW) * 2.7);
+    --keyGap: 6px;
+    --keyFont: 14px;
+
+    /* 기본 눈 변수(코딩 화면에서는 사용 안 함, 오버레이에서만 씀) */
+    --eyesGap: 8vmin;
+    --eyeSize: 42vmin;
+    --pupilSize: 16vmin;
+    --blinkSpeed: 180ms;
   }
+  @media (max-width: 480px){
+    :root{ --keyGap: 4px; --keyFont: 13px; }
+  }
+
   *{ box-sizing:border-box; }
   html, body{ height:100%; }
-  body{ margin:0; font-family:system-ui, sans-serif; background:#fff; }
+  body{ margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#fff; }
 
   /* ── 헤더 ───────────────────────────────── */
   header{
@@ -43,12 +201,16 @@
     position:relative; z-index:10;
   }
   #topbar{
-    display:flex; align-items:center; gap: calc(var(--gap) * var(--uiScale));
+    display:flex;
+    align-items:center;
+    gap: calc(var(--gap) * var(--uiScale));
     flex-wrap: wrap;
   }
   .title{
-    font-weight: 800; letter-spacing: .2px;
-    color:#7c2d12; margin-right: 12px;
+    font-weight: 800;
+    letter-spacing: .2px;
+    color:#7c2d12;
+    margin-right: 12px;
     font-size: calc(18px * var(--uiScale));
   }
   .spacer{ flex: 1 1 auto; }
@@ -56,20 +218,33 @@
   .btn{
     height: calc(var(--btnH) * var(--uiScale));
     padding: 0 calc(12px * var(--uiScale));
-    border:0; border-radius: calc(10px * var(--uiScale));
-    display:inline-flex; align-items:center; justify-content:center;
-    font-size: calc(14px * var(--uiScale)); font-weight:600;
+    border:0;
+    border-radius: calc(10px * var(--uiScale));
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    font-size: calc(14px * var(--uiScale));
+    font-weight:600;
     box-shadow:0 2px 8px rgba(0,0,0,.08);
-    background:#f3f4f6; color:#111827; cursor:pointer;
+    background:#f3f4f6;
+    color:#111827;
+    cursor:pointer;
     user-select:none;
   }
+  .btn.small{
+    height: calc(var(--btnH) * var(--uiScale) * .85);
+    padding: 0 calc(10px * var(--uiScale));
+    font-size: calc(12px * var(--uiScale));
+  }
   #connectToggle{ background:#2563eb; color:#fff; }
-  #rtToggle.on{ background:#2563eb; color:#fff; } /* 모달 속 실시간 버튼 */
+  #testBtn{ background:#0ea5e9; color:#fff; }
   #runToggle{ background:#16a34a; color:#fff; }
   #fsBtn{ background:#111827; color:#fff; }
 
   .state{
-    display:inline-flex; align-items:center; gap:calc(6px * var(--uiScale));
+    display:inline-flex;
+    align-items:center;
+    gap:calc(6px * var(--uiScale));
     height: calc(var(--btnH) * var(--uiScale));
     padding: 0 calc(6px * var(--uiScale));
     font-size: calc(12px * var(--uiScale));
@@ -78,9 +253,12 @@
     width: calc(22px * var(--uiScale));
     height: calc(22px * var(--uiScale));
     border-radius: 50%;
-    display:inline-flex; align-items:center; justify-content:center;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
     font-size: calc(11px * var(--uiScale));
-    font-weight:800; color:#fff;
+    font-weight:800;
+    color:#fff;
     box-shadow: 0 0 0 calc(4px * var(--uiScale)) rgba(0,0,0,.06) inset;
   }
   .badgeDot.on{ background:#3b82f6; }
@@ -88,78 +266,199 @@
 
   /* ── 레이아웃 ─────────────────────────── */
   #main{
-    display:flex; width:100%;
+    display:flex;
+    width:100%;
     height: calc(100vh - var(--headerH));
-    min-height: 0; /* ← 내부 스크롤 허용 */
   }
   #left{
-    position:relative; flex:1 1 auto; min-width:0; height:100%;
-    min-height:0; /* ← 내부 스크롤 허용 */
-    display:flex; overflow:visible;
+    position:relative;
+    flex:1 1 auto;
+    min-width:0;
+    height:100%;
+    display:flex;
+    overflow:visible;
   }
-  #blocklyDiv{ flex:1 1 auto; min-width:0; height:100%; width:100%; }
+  #blocklyDiv{
+    flex:1 1 auto;
+    min-width:0;
+    height:100%;
+    width:100%;
+  }
 
-  /* 오른쪽 패널 */
   #right{
-    flex:0 0 40%; display:flex; flex-direction:column; background:#fff;
-    margin:8px 8px 8px 0; border:1px solid #e5e7eb; border-left:3px solid var(--blue);
-    border-radius:12px 0 0 12px; box-shadow:0 2px 10px rgba(0,0,0,.04);
-    overflow:hidden; position:relative; min-height:0; /* ← 내부 스크롤 허용 */
+    flex:0 0 40%;
+    display:flex;
+    flex-direction:column;
+    background:#fff;
+    margin:8px 8px 8px 0;
+    border:1px solid #e5e7eb;
+    border-left:3px solid var(--blue);
+    border-radius:12px 0 0 12px;
+    box-shadow:0 2px 10px rgba(0,0,0,.04);
+    overflow:hidden;
+    position:relative;
   }
+
+  /* ── 우측 상단: 카메라 프리뷰 ── */
   #rightTop{
-    flex:1 1 auto; min-height:0; /* ← 내부 스크롤 허용 */
-    border-bottom:1px solid #e5e7eb; background:#f5f7fa; color:#111827;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    font-size: calc(13px * var(--uiScale)); line-height:1.45;
-    padding: calc(12px * var(--uiScale));
-    overflow:auto; white-space:pre; tab-size:2;
+    flex:1 1 auto;
+    border-bottom:1px solid #e5e7eb;
+    min-height: 120px;
+    background:#0b0f14;
+    color:#fff;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding: 0;
+    overflow:hidden;
   }
-/* 실행 로그 패널: 고정 높이 + 내부 스크롤 구조 */
-#rightBottom{
-  flex: 0 0 var(--logH);          /* <- 높이는 변수로 고정 */
-  display: flex;                  /* <- 세로 플렉스 컨테이너로 변경 */
-  flex-direction: column;
-  min-height: 0;                  /* <- 내부 스크롤 허용 */
-  overflow: hidden;               /* <- 자식 넘침 감춤(스크롤은 #log에서 처리) */
-  padding: calc(10px * var(--uiScale));
-  background:#0b0f14; 
-  color:#d1e4ff; 
-  border-top:1px solid #1f2937;
-}
+  .camWrap{
+    position:relative;
+    width:100%;
+    height:100%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:#000;
+  }
+  #camVideo{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    transform: scaleX(-1);
+    background:#000;
+  }
+  .camUi{
+    position:absolute;
+    right:12px;
+    top:12px;
+    display:flex;
+    gap:8px;
+    align-items:center;
+    z-index:2;
+  }
+  .camBadge{
+    font: 700 12px/1 system-ui;
+    color:#fff;
+    padding:.35rem .6rem;
+    border-radius:999px;
+    border:1px solid rgba(255,255,255,.3);
+    background:rgba(0,0,0,.35);
+    backdrop-filter: blur(6px)
+  }
 
-/* 실제 로그 박스: 영역을 채우고, 내용은 스크롤 */
-#log{
-  flex: 1 1 0;                    /* <- 남은 영역을 채움 */
-  min-height: 0;                  /* <- 내부 스크롤에 필수 */
-  overflow: auto;                 /* <- 내용 길어지면 스크롤 생성 */
-  white-space: pre-wrap; 
-  background:#0b0f14;
-  border:1px solid #1f2937; 
-  border-radius: calc(8px * var(--uiScale));
-  padding: calc(10px * var(--uiScale));
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: calc(12px * var(--uiScale)); 
-  color:#d1e4ff;
-}
+  /* 인식 투명창 (화면 면적의 약 절반) */
+  #focusBox{
+    position:absolute;
+    left:50%;
+    top:50%;
+    width:70%;
+    height:70%;
+    max-width:90%;
+    max-height:90%;
+    transform: translate(-50%,-50%);
+    border:2px solid rgba(255,255,255,.9);
+    border-radius:10px;
+    box-shadow:0 0 0 2px rgba(0,0,0,.25), 0 0 18px rgba(0,255,220,.35);
+    pointer-events:none;
+    z-index:2;
+    opacity:.15;
+    transition: opacity .2s linear;
+  }
 
+  /* 카메라 인식 읽기 배지(우측 패널) */
+  #digitReadout{
+    position:absolute;
+    left:50%;
+    transform:translateX(-50%);
+    bottom:12px;
+    z-index:2;
+    display:inline-flex;
+    align-items:center;
+    gap:.55rem;
+    font: 800 13px/1 system-ui;
+    color:#fff;
+    padding:.48rem .8rem;
+    border-radius:999px;
+    border:1px solid rgba(255,255,255,.35);
+    background:rgba(0,0,0,.35);
+    backdrop-filter: blur(6px);
+  }
+  #digitReadout .value{
+    font: 900 18px/1.1 ui-monospace, Menlo, Consolas, monospace;
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: rgba(255,255,255,.12);
+    box-shadow: 0 0 0 2px rgba(255,255,255,.18) inset;
+  }
 
-  /* 실행창 토글 핸들 */
+  /* 리사이저 바 */
+  #rightDivider{
+    flex:0 0 6px;
+    cursor: row-resize;
+    background: repeating-linear-gradient(90deg, #d1d5db 0, #d1d5db 6px, #e5e7eb 6px, #e5e7eb 12px);
+  }
+
+  /* 로그 패널 */
+  #rightBottom{
+    flex: 0 0 var(--logH);
+    display:flex;
+    flex-direction:column;
+    min-height:0;
+    overflow:hidden;
+    padding: calc(10px * var(--uiScale));
+    background:#0b0f14;
+    color:#d1e4ff;
+    border-top:1px solid #1f2937;
+  }
+  #log{
+    flex:1 1 0;
+    min-height:0;
+    overflow:auto;
+    white-space:pre-wrap;
+    background:#0b0f14;
+    border:1px solid #1f2937;
+    border-radius: calc(8px * var(--uiScale));
+    padding: calc(10px * var(--uiScale));
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: calc(12px * var(--uiScale));
+    color:#d1e4ff;
+  }
+
+  /* 실행창 토글 핸들 (슬라이더만 사용 – 숨김 상태) */
   #panelHandle{
-    position:absolute; top: calc(12px * var(--uiScale)); right: 0;
-    z-index:9999; width: var(--handleW); height: var(--handleH);
-    background: var(--blue); border: 0; border-radius: calc(6px * var(--uiScale));
+    position:absolute;
+    top: calc(12px * var(--uiScale));
+    right: 0;
+    z-index:999;
+    width: var(--handleW);
+    height: var(--handleH);
+    background: var(--blue);
+    border: 0;
+    border-radius: calc(6px * var(--uiScale));
     box-shadow: 0 2px 8px rgba(0,0,0,.18);
-    cursor: pointer; padding: 0;
+    cursor: pointer;
+    padding: 0;
   }
   #panelHandle::before{
-    content:''; position:absolute; top:0; right: calc(0px - var(--linkBar));
-    width: var(--linkBar); height:100%; background: var(--blue);
+    content:'';
+    position:absolute;
+    top:0;
+    right: calc(0px - var(--linkBar));
+    width: var(--linkBar);
+    height:100%;
+    background: var(--blue);
     border-top-right-radius: calc(6px * var(--uiScale));
     border-bottom-right-radius: calc(6px * var(--uiScale));
   }
   #panelHandle::after{
-    content:''; position:absolute; top:50%; transform: translateY(-50%);
-    width:0; height:0; border-style: solid;
+    content:'';
+    position:absolute;
+    top:50%;
+    transform: translateY(-50%);
+    width:0;
+    height:0;
+    border-style: solid;
   }
   #panelHandle.open::after{
     left: calc((var(--handleW) - var(--triW)) / 2);
@@ -172,96 +471,275 @@
     border-color: transparent white transparent transparent;
   }
   .blocklyZoom,.blocklyTrash{ display:block !important; }
+  .blocklyTrashLid, .blocklyTrashcanLid, .blocklyTrashCanLid { display:none !important; }
 
   body.fs-active #main{ height: calc(100vh - var(--headerH)); }
   body.panel-collapsed #right{ display:none; }
   body.panel-collapsed #left{ flex:1 1 100%; }
 
-  /* ───────────── 모달(멀티 서보 설정) ───────────── */
-  .modal{ position:fixed; inset:0; display:none; align-items:center; justify-content:center;
-          background:rgba(0,0,0,.45); z-index:10000; }
-  .modal.show{ display:flex; }
-  .modal-card{
-    /* 상하를 조금 더 확대 (이전보다 살짝 키움) */
-    width:min(98vw, 1400px);
-    height:min(98vh, 1040px);
-    background:#fff; border-radius:12px; box-shadow:0 18px 60px rgba(0,0,0,.25);
-    display:flex; flex-direction:column; overflow:hidden;
+  /* ── 전체화면 오버레이 ───────────────── */
+  #playOverlay{
+    position:fixed;
+    inset:0;
+    background:#000;
+    color:#fff;
+    display:none;
+    z-index:10000;
+    touch-action:none;
+    overscroll-behavior:contain;
+    -webkit-tap-highlight-color:transparent;
+    --eyesGap: 4.8vmin;
+    --eyeSize: 25.2vmin;
+    --pupilSize: 9.6vmin;
   }
-  .modal-head{
-    display:flex; align-items:center; gap:8px; padding:10px;
-    background:#fafafa; border-bottom:1px solid #e5e7eb;
+  @media (orientation: landscape){
+    #playOverlay{
+      --eyesGap: calc(4.8vmin * 2);
+      --eyeSize: calc(25.2vmin * 1.5);
+      --pupilSize: calc(9.6vmin * 1.5);
+    }
   }
-  .modal-head .title{ font-size:14px; color:#111827; font-weight:800; }
-  .modal-head .sp{ flex:1 1 auto; }
-  .modal-head .btn{ height:30px; background:#fff; border:1px solid #d1d5db; }
-  .modal-body{ position:relative; flex:1 1 auto; }
+  #playOverlay.show{
+    display:flex;
+    flex-direction:column;
+  }
+  /* 여기에서도 grid 사용 (위쪽 패치와 동일한 비율) */
+  #playOverlay .body{
+    flex:1 1 auto;
+    display:grid;
+    grid-template-columns: minmax(0, 2.6fr) minmax(260px, 1fr);
+    gap:0;
+    background:#000;
+    height:100%;
+  }
 
-  /* 모달 보드(흰 배경) + 유닛(회색 박스) + 검은 다이얼 */
-  .board{
-    position:absolute; inset:0; background:#ffffff; background-size:contain; background-repeat:no-repeat; background-position:center;
-    overflow:auto; /* ← 넘치면 스크롤 */
+  /* 눈동자 UI (현재는 숨김 상태지만 구조 유지) */
+  #eyesStage{
+    width:100%;
+    height:100%;
+    display:grid;
+    place-items:center;
+    background:#000;
   }
-  .unit{
-    position:absolute; width:128px; height:128px;
-    background:#d1d5db; border:1px solid #9ca3af; border-radius:10px;
-    box-shadow:0 2px 8px rgba(0,0,0,.12);
-    user-select:none; touch-action:none;
+  .eyes{
+    display:grid;
+    grid-auto-flow:column;
+    align-items:center;
+    gap: var(--eyesGap);
   }
-  .unit.dragging{ box-shadow:0 8px 18px rgba(0,0,0,.22); outline:1px dashed #cbd5e1; }
+  .eye{
+    position:relative;
+    width:var(--eyeSize);
+    height:var(--eyeSize);
+    border-radius: 50%;
+    overflow:hidden;
+    background: radial-gradient(ellipse at 40% 40%, #fff 0 70%, #e9e9e9 100%);
+    box-shadow: 0 1.2vmin 3vmin rgba(0,0,0,.45),
+                inset 0 -0.8vmin 1.6vmin rgba(0,0,0,.12);
+  }
+  .pupil{
+    position:absolute;
+    width:var(--pupilSize);
+    height:var(--pupilSize);
+    border-radius:50%;
+    background: radial-gradient(circle at 40% 35%, #222 0 45%, #000 70%, #000 100%);
+    left:50%;
+    top:50%;
+    transform:translate(-50%,-50%);
+    will-change: transform;
+  }
+  .shine{
+    position:absolute;
+    width: calc(var(--pupilSize)*.35);
+    height: calc(var(--pupilSize)*.35);
+    border-radius:50%;
+    background: rgba(255,255,255,.85);
+    left:25%;
+    top:22%;
+    filter: blur(0.2vmin);
+  }
+  .shine::after{
+    content:"";
+    position:absolute;
+    width:55%;
+    height:55%;
+    left:150%;
+    top:130%;
+    border-radius:50%;
+    background: rgba(255,255,255,.4);
+    filter: blur(0.25vmin);
+  }
+  .eyelid{
+    position:absolute;
+    inset:0;
+    background:#000;
+    transform-origin:top center;
+    transform:scaleY(0);
+    pointer-events:none;
+  }
+  .blink .eyelid{
+    animation: blink var(--blinkSpeed) ease-in-out forwards;
+  }
+  @keyframes blink{
+    0%{transform:scaleY(0)}
+    45%{transform:scaleY(1)}
+    100%{transform:scaleY(0)}
+  }
 
-  .handle{
-    position:absolute; inset:0 auto auto 0; height:22px; width:100%;
-    display:flex; align-items:center; justify-content:center;
-    font-size:12px; font-weight:900; letter-spacing:.3px; color:#111827;
-    background:#e5e7eb; border-bottom:1px solid #d1d5db; border-radius:10px 10px 0 0;
-    cursor:grab; z-index:3;
+  /* === 파일 드롭다운 === */
+  .dropdown{ position:relative; }
+  .dropdown .menu{
+    position:absolute;
+    right:0;
+    top:calc(100% + 4px);
+    display:none;
+    min-width:140px;
+    background:#ffffff;
+    border:1px solid #d1d5db;
+    border-radius:8px;
+    box-shadow:0 6px 16px rgba(0,0,0,.12);
+    padding:6px;
+    z-index:1000;
   }
-  .handle:active{ cursor:grabbing; }
-  .pwr-top{
-    position:absolute; right:4px; top:50%; transform:translateY(-50%);
-    width:16px; height:16px; border-radius:50%; display:grid; place-items:center;
-    border:1px solid #d1d5db; color:#fff; font-size:9px; font-weight:900;
-    background:#2563eb; cursor:pointer; user-select:none;
+  .dropdown .menu.show{ display:block; }
+  .dropdown .menu > button{
+    width:100%;
+    background:transparent;
+    border:0;
+    cursor:pointer;
+    padding:8px 10px;
+    border-radius:6px;
+    font-size:calc(13px * var(--uiScale));
+    text-align:left;
+    color:#111827;
   }
-  .pwr-top.off{ background:#ef4444; }
-
-  .row{ position:absolute; top:26px; left:50%; transform:translateX(-50%); width:calc(128px - 10px); height:24px; display:flex; gap:6px; z-index:2; }
-  .numbox, .speedbox{
-    flex:1 1 0; height:100%; border-radius:7px; background:#ffffff; border:1px solid #d1d5db;
-    display:flex; align-items:center; justify-content:center;
-  }
-  .numbox input{
-    width:calc(100% - 10px); height:18px; border:0; outline:none; background:transparent; color:#111827; text-align:center; font-size:12px;
-  }
-  .speedbox select{
-    width:100%; height:18px; border:0; outline:none; background:transparent; color:#111827; text-align:center; font-size:12px;
-  }
-  .dial-svg{
-    position:absolute; left:50%; top:calc(50% + 20px); transform:translate(-50%,-50%);
-    width:56px; height:56px; z-index:1;
-  }
-  .ring-base{ fill:#0a0a0a; stroke:#111827; stroke-width:2; }
-  .tick{ stroke:#9aa3b2; stroke-width:2; stroke-linecap:round; }
-  .dot{ transition: fill .12s ease, filter .12s ease, r .12s ease, stroke .12s ease; }
-  .dot.blue{ stroke:#1e3a8a; stroke-width:.6; }
-  .dot.red { fill:#ef4444; stroke:#7f1d1d; stroke-width:.6; filter: drop-shadow(0 0 6px rgba(239,68,68,.9)); }
+  .dropdown .menu > button:hover{ background:#f3f4f6; }
+  #fileBtn{ background:#6b7280; color:#ffffff; }
 </style>
+
+<!-- 좌우 크기 슬라이더 -->
+<style id="xrobo-hsplit-style">
+  :root{ --rightW: 40%; } /* initial right width */
+  #hResizer{
+    flex: 0 0 8px;
+    background: linear-gradient(90deg,#e5e7eb,#d1d5db);
+    border-left: 1px solid #cbd5e1;
+    border-right: 1px solid #cbd5e1;
+    cursor: col-resize;
+    touch-action: none;
+    margin: 8px 0;
+  }
+  body.hs-resizing,
+  body.hs-resizing *{
+    cursor: col-resize !important;
+    user-select: none !important;
+  }
+  #right{
+    flex: 0 0 var(--rightW) !important;
+    width: var(--rightW) !important;
+    min-width: 0 !important;
+  }
+</style>
+<style id="single-change-hide-handle">
+  /* 기존 열기/닫기 버튼 숨김 (슬라이더로만 조절) */
+  #panelHandle { display: none !important; }
+</style>
+
+<!-- 안드로이드용 숫자 키패드 스타일 (원본 유지) -->
+<style id="xrobo-kp4x4-v14-style">
+  :root { --xroboKpScale: .7; }
+  #xrobo-kp4x4-v14{
+    position:absolute;
+    left:0;
+    top:0;
+    display:none;
+    z-index:2147483647;
+    background:#000;
+    border:2px solid #000;
+    border-radius:calc(16px * var(--xroboKpScale));
+    padding: calc(12px * var(--xroboKpScale));
+    box-shadow:0 16px 46px rgba(0,0,0,.45);
+    user-select:none;
+    touch-action:manipulation;
+  }
+  #xrobo-kp4x4-v14.show{ display:block; }
+  #xrobo-kp4x4-v14 .display{
+    margin-bottom:calc(10px * var(--xroboKpScale));
+    background:#0b0f14;
+    color:#e5e7eb;
+    border:1px solid #1f2937;
+    border-radius:calc(10px * var(--xroboKpScale));
+    padding:calc(10px * var(--xroboKpScale)) calc(12px * var(--xroboKpScale));
+    font-weight:800;
+    font-size:calc(18px * var(--xroboKpScale));
+    letter-spacing:.6px;
+    min-height:24px;
+  }
+  #xrobo-kp4x4-v14 .grid{
+    display:grid;
+    grid-template-columns: repeat(4, calc(56px * var(--xroboKpScale)));
+    grid-auto-rows: calc(56px * var(--xroboKpScale));
+    gap: calc(10px * var(--xroboKpScale));
+  }
+  #xrobo-kp4x4-v14 button{
+    border:0;
+    border-radius:calc(12px * var(--xroboKpScale));
+    background:#fff;
+    color:#111;
+    font-weight:900;
+    font-size:calc(20px * var(--xroboKpScale));
+    box-shadow:0 calc(4px * var(--xroboKpScale)) calc(14px * var(--xroboKpScale)) rgba(0,0,0,.22);
+    cursor:pointer;
+  }
+  #xrobo-kp4x4-v14 button:active{ transform:translateY(1px); }
+  #xrobo-kp4x4-v14 .op{ background:#e6eefc; color:#0b3aa6; font-weight:800; }
+  #xrobo-kp4x4-v14 .back{ background:#111827; color:#fff; font-size:calc(18px * var(--xroboKpScale)); }
+  #xrobo-kp4x4-v14 .clear{ background:#e5e7eb; color:#111827; font-size:calc(16px * var(--xroboKpScale)); font-weight:800; }
+  #xrobo-kp4x4-v14 .wide{ grid-column: span 2; height:calc(56px * var(--xroboKpScale)); font-size:calc(18px * var(--xroboKpScale)); font-weight:800; }
+  #xrobo-kp4x4-v14 .ok{ background:#2563eb; color:#fff; }
+  #xrobo-kp4x4-v14 .cancel{ background:#6b7280; color:#fff; }
+</style>
+
+<!-- ★★★ 실행 전체화면에서 카메라만 사용 + 실행 로그 숨김 패치 (원본 유지) ★★★ -->
+<style id="overlay-fullcam-patch">
+  /* 실행(전체화면)에서는 카메라 화면만 전체 사용, 오른쪽 실행 로그 패널 숨김 */
+  #playOverlay .body{
+    flex:1 1 auto;
+    display:flex;
+    flex-direction:column;
+    height:100%;
+    background:#000;
+  }
+  #ovRight{
+    display:none !important;
+  }
+</style>
+
 </head>
 <body>
   <!-- 헤더 -->
   <header id="appHeader">
     <div id="topbar">
-      <div class="title">XROBO BLE</div>
+      <div class="title">XROBO v5 — 얼굴 방향 인식</div>
       <div class="spacer"></div>
 
-      <!-- 저장/불러오기 버튼 -->
-      <button id="saveBtn" class="btn" title="프로젝트 저장">저장</button>
-      <button id="loadBtn" class="btn" title="프로젝트 불러오기">불러오기</button>
+      <!-- 파일 드롭다운 -->
+      <div class="dropdown" id="fileDropdown">
+        <button id="fileBtn" class="btn" title="파일">파일 ▾</button>
+        <div id="fileMenu" class="menu" role="menu" aria-hidden="true">
+          <button data-cmd="new"  role="menuitem">새로만들기</button>
+          <button data-cmd="save" role="menuitem">저장하기</button>
+          <button data-cmd="load" role="menuitem">불러오기</button>
+        </div>
+      </div>
 
       <span class="state"><span id="statusDot" class="badgeDot off">off</span></span>
       <button id="connectToggle" class="btn">연결</button>
-      <button id="runToggle" class="btn" disabled>▶ 실행</button>
+
+      <!-- 테스트/실행 -->
+      <button id="testBtn" class="btn" title="코딩 화면에서 테스트 실행">테스트</button>
+      <button id="runToggle" class="btn" title="전체화면 인식 실행">실행</button>
+
       <button id="fsBtn" class="btn" title="전체화면">전체화면</button>
     </div>
   </header>
@@ -273,8 +751,32 @@
       <button id="panelHandle" class="open" title="실행창 닫기"></button>
     </div>
 
+    <div id="hResizer" class="hsplit" title="좌우 크기 조절 바"></div>
+
     <div id="right">
-      <div id="rightTop"></div>
+      <!-- 우측 상단: 카메라 프리뷰 -->
+      <div id="rightTop">
+        <div class="camWrap" id="camWrap">
+          <video id="camVideo" playsinline autoplay muted></video>
+          <div id="focusBox"></div>
+
+          <!-- ★ 얼굴 거리 안내(상단) -->
+          <div id="faceDistHint" class="camDistHint">—</div>
+
+          <div class="camUi">
+            <span id="camBadge" class="camBadge">Cam: off</span>
+            <button id="camToggle" class="btn small">캠 켜기</button>
+          </div>
+          <!-- 인식 표시(패널) -->
+          <div id="digitReadout">
+            <span class="label">얼굴방향</span>
+            <span class="value">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="rightDivider" title="드래그하여 로그 높이 조절"></div>
+
       <div id="rightBottom">
         <div style="font-size:calc(12px * var(--uiScale));color:#9ca3af;">실행 로그</div>
         <div id="log"></div>
@@ -284,101 +786,73 @@
 
   <!-- 툴박스 -->
   <xml id="toolbox" style="display:none">
-    <category name="이벤트" colour="#f59e0b"><block type="xrobo_start"></block></category>
-
-    <category name="입력" colour="#06b6d4">
-      <block type="in_xkeypad"><field name="PIN">IN1</field><field name="BTN">B1</field></block>
-      <block type="in_ir_dist"><field name="PIN">IN1</field>
-        <value name="DIST"><shadow type="math_number"><field name="NUM">10</field></shadow></value></block>
-      <block type="in_touch"><field name="PIN">IN1</field></block>
+    <category name="이벤트" colour="#f59e0b">
+      <block type="xrobo_start"></block>
     </category>
-
     <category name="출력" colour="#60a5fa">
-      <block type="motor12_dd"><field name="M1">20</field><field name="M2">20</field><field name="MS">500</field></block>
+      <block type="motor12_dd">
+        <field name="M1">20</field>
+        <field name="M2">20</field>
+        <field name="MS">500</field>
+      </block>
       <block type="motor12_in">
         <value name="M1"><shadow type="math_number"><field name="NUM">20</field></shadow></value>
         <value name="M2"><shadow type="math_number"><field name="NUM">20</field></shadow></value>
         <value name="MS"><shadow type="math_number"><field name="NUM">500</field></shadow></value>
       </block>
-
-      <block type="motor34_dd"><field name="M3">20</field><field name="M4">20</field><field name="MS">500</field></block>
-      <block type="motor34_in">
-        <value name="M3"><shadow type="math_number"><field name="NUM">20</field></shadow></value>
-        <value name="M4"><shadow type="math_number"><field name="NUM">20</field></shadow></value>
-        <value name="MS"><shadow type="math_number"><field name="NUM">500</field></shadow></value>
-      </block>
-
-      <block type="servo_dd"><field name="OUT">OUT1</field><field name="ANG">90</field></block>
-      <block type="servo_in"><field name="OUT">OUT1</field>
-        <value name="ANG"><shadow type="math_number"><field name="NUM">90</field></shadow></value></block>
-      <block type="servo_slow"><field name="OUT">OUT1</field>
-        <value name="DELAY"><shadow type="math_number"><field name="NUM">5</field></shadow></value>
-        <value name="ANG"><shadow type="math_number"><field name="NUM">90</field></shadow></value></block>
-
-      <block type="melody"><field name="PITCH">C4</field>
+      <block type="melody">
+        <field name="PITCH">C4</field>
         <value name="DUR"><shadow type="math_number"><field name="NUM">200</field></shadow></value>
-        <value name="WAIT"><shadow type="math_number"><field name="NUM">250</field></shadow></value></block>
-
-      <block type="led_ctrl"><field name="TGT">OUT1</field><field name="MODE">BRIGHT</field><field name="VAL">10</field></block>
-
-      <!-- ★ 멀티 서보 블록 -->
-      <block type="multi_servo"></block>
+        <value name="WAIT"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+      </block>
+      <block type="led_ctrl">
+        <field name="TGT">OUT1</field>
+        <field name="MODE">BRIGHT</field>
+        <field name="VAL">10</field>
+      </block>
     </category>
-
     <category name="제어" colour="#10b981">
-      <block type="repeat_forever"></block>
-      <block type="controls_repeat_ext"><value name="TIMES">
-        <shadow type="math_number"><field name="NUM">3</field></shadow></value></block>
-      <block type="controls_if"></block>
-      <block type="controls_if"><mutation else="1"></mutation></block>
-      <block type="wait_seconds"><value name="SEC">
-        <shadow type="math_number"><field name="NUM">1</field></shadow></value></block>
-      <block type="control_wait_until"></block>
-      <block type="control_repeat_until"></block>
+      <block type="controls_repeat_ext">
+        <value name="TIMES"><shadow type="math_number"><field name="NUM">3</field></shadow></value>
+      </block>
+      <block type="wait_seconds">
+        <value name="SEC"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+      </block>
     </category>
-
-    <category name="연산" colour="#a78bfa">
-      <block type="math_arithmetic">
-        <value name="A"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
-        <value name="B"><shadow type="math_number"><field name="NUM">2</field></shadow></value>
-      </block>
-      <block type="logic_compare">
-        <value name="A"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
-        <value name="B"><shadow type="math_number"><field name="NUM">5</field></shadow></value>
-      </block>
-      <block type="logic_operation"></block>
-      <block type="logic_negate"></block>
-      <block type="logic_boolean"></block>
-      <block type="math_random_int">
-        <value name="FROM"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
-        <value name="TO"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
-      </block>
-      <block type="math_number"><field name="NUM">20</field></block>
-      <block type="math_number"><field name="NUM">500</field></block>
-    </category>
-
-    <category name="변수" colour="#f97316" custom="VARIABLE"></category>
-    <category name="내블록" colour="#ef4444" custom="PROCEDURE"></category>
   </xml>
 
-  <!-- ── 멀티 서보 설정 모달 ── -->
-  <div id="servoModal" class="modal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-      <div class="modal-head">
-        <div id="modalTitle" class="title">멀티 서보 설정</div>
+  <!-- 전체화면 오버레이 -->
+  <div id="playOverlay" aria-hidden="true">
+    <div class="body">
+      <div id="ovCamWrap">
+        <video id="eyesCam" playsinline muted autoplay></video>
+        <div id="ovFocusBox"></div>
 
-        <div class="sp"></div>
+        <!-- ★ 얼굴 거리 안내(상단) -->
+        <div id="ovFaceDistHint" class="camDistHint">—</div>
 
-        <!-- 실시간 토글 버튼 (모달 내부) -->
-        <button id="rtToggle" class="btn" title="실시간 전송 토글">실시간: OFF</button>
-
-        <button id="addServoBtn" class="btn">+ 서보 추가</button>
-        <input id="bgUrl" class="btn" style="width:260px;text-align:left" placeholder="배경 이미지 URL (선택)">
-        <button id="applyBg" class="btn">배경 적용</button>
-        <button id="closeModal" class="btn">저장 & 닫기 ✕</button>
+        <div id="overlayDigitBadge">
+          <span class="label">얼굴방향</span>
+          <span class="value">—</span>
+        </div>
       </div>
-      <div class="modal-body">
-        <div id="board" class="board"></div>
+
+      <div id="ovRight" class="ov-right-panel" aria-label="실행 로그 영역">
+        <div class="ov-header">실행 로그</div>
+        <div id="ovLog" class="ov-log" role="log" aria-live="polite" aria-atomic="false"></div>
+      </div>
+
+      <div id="eyesStage" aria-label="귀여운 눈동자">
+        <div class="eyes">
+          <div class="eye">
+            <div class="pupil"><div class="shine"></div></div>
+            <div class="eyelid"></div>
+          </div>
+          <div class="eye">
+            <div class="pupil"><div class="shine"></div></div>
+            <div class="eyelid"></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -386,1011 +860,1969 @@
 <script>
 /* ================= Blockly 기본 설정 ================= */
 class XroboZelosProvider extends Blockly.zelos.ConstantProvider {
-  constructor(){ super(); this.ADD_START_HATS = true; }
+  constructor(){
+    super();
+    this.ADD_START_HATS = true;
+  }
 }
 class XroboZelosRenderer extends Blockly.zelos.Renderer {
   constructor(){ super('xrobo_zelos'); }
   makeConstants_(){ return new XroboZelosProvider(); }
 }
 Blockly.blockRendering.register('xrobo_zelos', XroboZelosRenderer);
-
 const XroboTheme = Blockly.Theme.defineTheme('xrobo_theme', {
-  base: Blockly.Themes.Zelos, componentStyles: { startHats: true }
+  base: Blockly.Themes.Zelos,
+  componentStyles: { startHats: true }
 });
 
-const ws = Blockly.inject('blocklyDiv', {
+var ws = Blockly.inject('blocklyDiv', {
   toolbox: document.getElementById('toolbox'),
-  renderer: 'xrobo_zelos', theme: XroboTheme,
+  renderer: 'xrobo_zelos',
+  theme: XroboTheme,
   grid: { spacing:20, length:3, colour:'#eee', snap:true },
-  zoom: { controls:true, wheel:true }
+  zoom: { controls:true, wheel:true, startScale:1, minScale:0.5, maxScale:2 },
+  move: { scrollbars:true, drag:true, wheel:true },
+  trashcan: true
 });
+
+/* ▼▼ Blockly v12 변수 API 경고 제거용 SHIM ▼▼ */
+(function patchBlocklyDeprecated(){
+  try{
+    if (Blockly.Workspace && Blockly.Workspace.prototype && Blockly.Workspace.prototype.getAllVariables) {
+      Blockly.Workspace.prototype.getAllVariables = function(){
+        var vm = this.getVariableMap ? this.getVariableMap() : null;
+        return (vm && vm.getAllVariables) ? vm.getAllVariables() : [];
+      };
+    }
+  }catch(e){}
+})();
+/* ▲▲ SHIM 끝 ▲▲ */
+
+/* 드래그 중 자동 스크롤 방지 */
+(function disableAutoScrollWhileBlockDragging(){
+  try{
+    if (Blockly.BlockDragger && Blockly.BlockDragger.prototype) {
+      var orig = Blockly.BlockDragger.prototype.updateDrag;
+      if (typeof orig === 'function') {
+        Blockly.BlockDragger.prototype.updateDrag = function(e){
+          var saved = this.autoScroll_;
+          this.autoScroll_ = null;
+          var r = orig.call(this, e);
+          this.autoScroll_ = saved;
+          return r;
+        };
+      }
+    }
+  }catch(e){ console.warn('AutoScroll patch failed', e); }
+})();
+
+/* ================= 상수/공용 ================= */
+var PINS_OUT=[["OUT1","OUT1"],["OUT2","OUT2"],["OUT3","OUT3"],["OUT4","OUT4"],["OUT5","OUT5"],["OUT6","OUT6"],["OUT7","OUT7"],["OUT8","OUT8"]];
+var SPEEDS=Array.from({length:41},(_,i)=>20-i).map(v=>[String(v),String(v)]);
+var TIMES100=Array.from({length:10},(_,i)=>100*(i+1)).map(v=>[String(v),String(v)]);
+var LED_TGT=[].concat(PINS_OUT,[["CPU","CPU"]]);
+var LED_MODE=[["밝기","BRIGHT"],["숨쉬기","BREATHE"]];
+var LED_VALS=Array.from({length:20},(_,i)=>[String(i),String(i)]);
 
 /* ================= 블록 정의 ================= */
-const PINS_IN=[["IN1","IN1"],["IN2","IN2"],["IN3","IN3"],["IN4","IN4"]];
-const PINS_OUT=[["OUT1","OUT1"],["OUT2","OUT2"],["OUT3","OUT3"],["OUT4","OUT4"],["OUT5","OUT5"],["OUT6","OUT6"],["OUT7","OUT7"],["OUT8","OUT8"]];
-const KEYS_B=[["B1","B1"],["B2","B2"],["B3","B3"],["B4","B4"],["B5","B5"]];
-const SPEEDS=Array.from({length:41},(_,i)=>20-i).map(v=>[String(v),String(v)]);
-const TIMES100=Array.from({length:10},(_,i)=>(100*(i+1))).map(v=>[String(v),String(v)]);
-const ANG_5=Array.from({length:37},(_,i)=>i*5).map(v=>[String(v),String(v)]);
-const LED_TGT=[...PINS_OUT,["CPU","CPU"]];
-const LED_MODE=[["밝기","BRIGHT"],["숨쉬기","BREATHE"]];
-const LED_VALS=Array.from({length:20},(_,i)=>[String(i),String(i)]);
-const PITCHES=(()=>{const KR=["도","레","미","파","솔","라","시"],EN=["C","D","E","F","G","A","B"],L=[];
-  for(let o=4;o<=6;o++) for(let i=0;i<7;i++) L.push([`${KR[i]}${o}`, `${EN[i]}${o}`]); return L;})();
-
+/* ★ 이벤트 블록(얼굴 방향) 옵션 ★ */
+const DIGIT_OPTIONS = [
+  ["정면","F_FRONT"],
+  ["위","F_UP"],
+  ["아래","F_DOWN"],
+  ["왼쪽","F_LEFT"],
+  ["오른쪽","F_RIGHT"]
+];
 Blockly.defineBlocksWithJsonArray([
-  { "type":"xrobo_start", "message0":"XROBO start", "nextStatement":null, "colour":36, "hat":"cap" },
-
-  { "type":"in_xkeypad", "message0":"X 키패드 핀 %1 버튼 %2",
-    "args0":[{"type":"field_dropdown","name":"PIN","options":PINS_IN},{"type":"field_dropdown","name":"BTN","options":KEYS_B}],
-    "output":"Boolean","colour":198 },
-
-  { "type":"in_ir_dist", "message0":"적외선센서 핀 %1 거리 %2 이내",
-    "args0":[{"type":"field_dropdown","name":"PIN","options":PINS_IN},{"type":"input_value","name":"DIST","check":"Number"}],
-    "output":"Boolean","colour":198 },
-
-  { "type":"in_touch", "message0":"접촉센서 핀 %1 눌림",
-    "args0":[{"type":"field_dropdown","name":"PIN","options":PINS_IN}],
-    "output":"Boolean","colour":198 },
-
-  { "type":"motor12_dd","message0":"모터 M1 %1  M2 %2  시간 %3 ms",
-    "args0":[{"type":"field_dropdown","name":"M1","options":SPEEDS},{"type":"field_dropdown","name":"M2","options":SPEEDS},{"type":"field_dropdown","name":"MS","options":TIMES100}],
-    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":210 },
-
-  { "type":"motor12_in","message0":"모터 M1 %1  M2 %2  시간 %3 ms",
-    "args0":[{"type":"input_value","name":"M1","check":"Number"},{"type":"input_value","name":"M2","check":"Number"},{"type":"input_value","name":"MS","check":"Number"}],
-    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":210 },
-
-  { "type":"motor34_dd","message0":"모터 M3 %1  M4 %2  시간 %3 ms",
-    "args0":[{"type":"field_dropdown","name":"M3","options":SPEEDS},{"type":"field_dropdown","name":"M4","options":SPEEDS},{"type":"field_dropdown","name":"MS","options":TIMES100}],
-    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":210 },
-
-  { "type":"motor34_in","message0":"모터 M3 %1  M4 %2  시간 %3 ms",
-    "args0":[{"type":"input_value","name":"M3","check":"Number"},{"type":"input_value","name":"M4","check":"Number"},{"type":"input_value","name":"MS","check":"Number"}],
-    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":210 },
-
-  { "type":"servo_dd","message0":"서보모터 %1 각도 %2°",
-    "args0":[{"type":"field_dropdown","name":"OUT","options":PINS_OUT},{"type":"field_dropdown","name":"ANG","options":ANG_5}],
-    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":30 },
-
-  { "type":"servo_in","message0":"서보모터 %1 각도 %2°",
-    "args0":[{"type":"field_dropdown","name":"OUT","options":PINS_OUT},{"type":"input_value","name":"ANG","check":"Number"}],
-    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":30 },
-
-  { "type":"servo_slow","message0":"슬로우 서보 %1 지연 %2 ms 각도 %3°",
-    "args0":[{"type":"field_dropdown","name":"OUT","options":PINS_OUT},{"type":"input_value","name":"DELAY","check":"Number"},{"type":"input_value","name":"ANG","check":"Number"}],
-    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":30 },
-
-  { "type":"melody","message0":"멜로디 음높이 %1 소리시간 %2 ms 대기시간 %3 ms",
-    "args0":[{"type":"field_dropdown","name":"PITCH","options":PITCHES},{"type":"input_value","name":"DUR","check":"Number"},{"type":"input_value","name":"WAIT","check":"Number"}],
-    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":300 },
-
-  { "type":"led_ctrl","message0":"LED %1 모드 %2 값 %3",
-    "args0":[{"type":"field_dropdown","name":"TGT","options":LED_TGT},{"type":"field_dropdown","name":"MODE","options":LED_MODE},{"type":"field_dropdown","name":"VAL","options":LED_VALS}],
-    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":330 },
-
-  { "type":"repeat_forever","message0":"forever %1 %2",
-    "args0":[{"type":"input_statement","name":"DO"},{"type":"input_dummy"}],"previousStatement":null,"nextStatement":null,"colour":120 },
-
-  { "type":"wait_seconds","message0":"%1 초 기다리기",
-    "args0":[{"type":"input_value","name":"SEC","check":"Number"}],
-    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":120 },
-
-  { "type":"control_wait_until","message0":"다음까지 기다리기 %1",
-    "args0":[{"type":"input_value","name":"COND","check":"Boolean"}],"previousStatement":null,"nextStatement":null,"colour":120 },
-
-  { "type":"control_repeat_until","message0":"다음까지 반복 %1 %2 %3",
-    "args0":[{"type":"input_value","name":"COND","check":"Boolean"},{"type":"input_statement","name":"DO"},{"type":"input_dummy"}],
-    "previousStatement":null,"nextStatement":null,"colour":120 },
-
-  /* ★ 멀티 서보 블록 정의 (복사 버튼 포함) */
   {
-    "type":"multi_servo",
-    "message0":"멀티 서보 (개수: %1)  %2 %3",
+    "type":"xrobo_start",
+    "message0":"얼굴 방향 %1 이 보이면",
+    "args0":[{ "type":"field_dropdown","name":"DIGIT","options": DIGIT_OPTIONS }],
+    "nextStatement":null,
+    "colour":36,
+    "hat":"cap"
+  },
+  {
+    "type":"motor12_dd",
+    "message0":"모터 M1 %1  M2 %2  시간 %3 ms",
     "args0":[
-      { "type":"field_label_serializable", "name":"COUNT", "text":"0" },
-      { "type":"field_image", "name":"CFG",
-        "src":"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24'><path fill='%23000' d='M10.325 4.317a1 1 0 0 1 1.35-.447l.162.08l1.028.514a8.9 8.9 0 0 1 1.46-.419l.21-1.146A1 1 0 0 1 15.52 2h2.96a1 1 0 0 1 .986.836l.21 1.146c.514.126 1.007.297 1.46.52l1.029-.515a1 1 0 0 1 1.33.427l1.48 2.564a1 1 0 0 1-.255 1.287l-.94.767c.082.5.124 1.013.124 1.535s-.042 1.035-.124 1.535l.94.767a1 1 0 0 1 .255 1.287l-1.48 2.564a1 1 0 0 1-1.33.427l-1.028-.515a8.9 8.9 0 0 1-1.46.52l-.21 1.145A1 1 0 0 1 18.48 22h-2.96a1 1 0 0 1-.986-.836l-.21-1.145a8.9 8.9 0 0 1-1.459-.419l-1.028.514a1 1 0 0 1-1.35-.447l-1.48-2.564a1 1 0 0 1 .255-1.287l.94-.767A7.91 7.91 0 0 1 10 12c0-.522.042-1.035.124-1.535l-.94-.767a1 1 0 0 1-.255-1.287zM17 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6' /></svg>",
-        "width":20, "height":20, "alt":"설정" },
-      { "type":"field_image", "name":"DUP",
-        "src":"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24'><path fill='%23000' d='M16 1H4a2 2 0 0 0-2 2v12h2V3h12z'/><path fill='%23000' d='M20 5H8a2 2 0 0 0-2 2v14h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2m0 16H8V7h12z'/></svg>",
-        "width":20, "height":20, "alt":"복사" }
+      {"type":"field_dropdown","name":"M1","options":SPEEDS},
+      {"type":"field_dropdown","name":"M2","options":SPEEDS},
+      {"type":"field_dropdown","name":"MS","options":TIMES100}
     ],
-    "previousStatement":null, "nextStatement":null, "colour": 30,
-    "extensions": ["multi_servo_cfg"]
+    "previousStatement":null,
+    "nextStatement":null,
+    "inputsInline":true,
+    "colour":210
+  },
+  {
+    "type":"motor12_in",
+    "message0":"모터 M1 %1  M2 %2  시간 %3 ms",
+    "args0":[
+      {"type":"input_value","name":"M1","check":"Number"},
+      {"type":"input_value","name":"M2","check":"Number"},
+      {"type":"input_value","name":"MS","check":"Number"}
+    ],
+    "previousStatement":null,
+    "nextStatement":null,
+    "inputsInline":true,
+    "colour":210
+  },
+  {
+    "type":"melody",
+    "message0":"멜로디 음높이 %1 소리시간 %2 ms 대기시간 %3 ms",
+    "args0":[
+      {"type":"field_dropdown","name":"PITCH","options":(function(){
+        var KR=["도","레","미","파","솔","라","시"], EN=["C","D","E","F","G","A","B"], L=[];
+        for(var o=4;o<=6;o++) for(var i=0;i<7;i++) L.push([KR[i]+o, EN[i]+o]);
+        return L;
+      })()},
+      {"type":"input_value","name":"DUR","check":"Number"},
+      {"type":"input_value","name":"WAIT","check":"Number"}
+    ],
+    "previousStatement":null,
+    "nextStatement":null,
+    "inputsInline":true,
+    "colour":300
+  },
+  {
+    "type":"led_ctrl",
+    "message0":"LED %1 모드 %2 값 %3",
+    "args0":[
+      {"type":"field_dropdown","name":"TGT","options":LED_TGT},
+      {"type":"field_dropdown","name":"MODE","options":LED_MODE},
+      {"type":"field_dropdown","name":"VAL","options":LED_VALS}
+    ],
+    "previousStatement":null,
+    "nextStatement":null,
+    "inputsInline":true,
+    "colour":330
+  },
+  {
+    "type":"wait_seconds",
+    "message0":"%1 초 기다리기",
+    "args0":[{"type":"input_value","name":"SEC","check":"Number"}],
+    "previousStatement":null,
+    "nextStatement":null,
+    "inputsInline":true,
+    "colour":120
   }
 ]);
 
-/* 멀티 서보 확장: 설정 버튼 + 복사 버튼 */
-const multiServoConfigs = new Map(); // blockId -> config({units:[...], bgUrl:""})
-
-function cloneConfigDeep(cfg){
-  return JSON.parse(JSON.stringify(cfg || { bgUrl:'', units:[] }));
+/* ================= 코드 빌더 ================= */
+function numFromInput(parent, name, def){
+  if (def===void 0) def=0;
+  var raw = Blockly.JavaScript.valueToCode(parent, name, Blockly.JavaScript.ORDER_NONE);
+  var n = Number(raw != null ? raw : '');
+  return (isFinite(n) ? n : def);
 }
-function duplicateMultiServoBlock(srcBlock){
-  const cfgOld = multiServoConfigs.get(srcBlock.id);
-  const cfgNew = cloneConfigDeep(cfgOld || {
-    bgUrl:'',
-    units:[{name:'S1', angle:135, speed:10, power:true, x:12, y:56}]
-  });
-  const pos = srcBlock.getRelativeToSurfaceXY();
-  const newBlock = ws.newBlock('multi_servo');
-  newBlock.initSvg(); newBlock.render();
-  newBlock.moveBy(pos.x + 30, pos.y + 30);
-  multiServoConfigs.set(newBlock.id, cfgNew);
-  newBlock.setFieldValue(String(cfgNew.units?.length || 0), 'COUNT');
-  newBlock.select();
-}
-Blockly.Extensions.register('multi_servo_cfg', function (){
-  const cfgBtn = this.getField('CFG');
-  const dupBtn = this.getField('DUP');
-  if (cfgBtn?.setOnClickHandler) cfgBtn.setOnClickHandler(() => openServoModal(this));
-  if (dupBtn?.setOnClickHandler) dupBtn.setOnClickHandler(() => duplicateMultiServoBlock(this));
-  this.setOnChange(function(){
-    if (this.isDeadOrDying_) multiServoConfigs.delete(this.id);
-  });
-});
-
-/* ================= 식/코드 생성 유틸 ================= */
-function numFromInput(parent, name, def=0){
-  const n = Number(Blockly.JavaScript.valueToCode(parent, name, Blockly.JavaScript.ORDER_NONE) ?? '');
-  return Number.isFinite(n) ? n : def;
-}
-function exprFromBlock(b){
-  if(!b) return '/* cond */';
-  switch(b.type){
-    case 'math_number': return String(b.getFieldValue('NUM'));
-    case 'logic_boolean': return (b.getFieldValue('BOOL')==='TRUE')?'true':'false';
-    case 'logic_negate': return '!(' + exprFromBlock(b.getInputTargetBlock('BOOL')) + ')';
-    case 'logic_operation': {
-      const op = b.getFieldValue('OP')==='AND'?'&&':'||';
-      return '('+exprFromBlock(b.getInputTargetBlock('A'))+' '+op+' '+exprFromBlock(b.getInputTargetBlock('B'))+')';
-    }
-    case 'logic_compare': {
-      const map={EQ:'==',NEQ:'!=',LT:'<',LTE:'<=',GT:'>',GTE:'>='};
-      const op = map[b.getFieldValue('OP')] || '==';
-      return '('+exprFromBlock(b.getInputTargetBlock('A'))+' '+op+' '+exprFromBlock(b.getInputTargetBlock('B'))+')';
-    }
-    case 'math_arithmetic': {
-      const map={ADD:'+',MINUS:'-',MULTIPLY:'*',DIVIDE:'/',POWER:'^'};
-      const op = map[b.getFieldValue('OP')]||'+';
-      const A = exprFromBlock(b.getInputTargetBlock('A'));
-      const B = exprFromBlock(b.getInputTargetBlock('B'));
-      return '('+A+' '+op+' '+B+')';
-    }
-    case 'math_random_int': {
-      const A = exprFromBlock(b.getInputTargetBlock('FROM')) || '0';
-      const B = exprFromBlock(b.getInputTargetBlock('TO')) || '0';
-      return `random(${A}, ${B})`;
-    }
-    case 'in_touch':  return `TOUCH(${b.getFieldValue('PIN')})`;
-    case 'in_xkeypad':return `XKEY(${b.getFieldValue('PIN')}, ${b.getFieldValue('BTN')})`;
-    case 'in_ir_dist':{
-      const d = numFromInput(b,'DIST',10);
-      return `(IR(${b.getFieldValue('PIN')}) <= ${d})`;
-    }
-  }
-  return '/* cond */';
-}
-
-/* 순회/중복 제거 */
 function walkNode(b, list){
   if(!b) return;
   switch(b.type){
     case 'motor12_dd':{
-      const v1=+b.getFieldValue('M1'),v2=+b.getFieldValue('M2'),ms=+b.getFieldValue('MS');
-      list.push({type:'CMD',s:`M12 ${v1} ${v2} ${ms}`}); if(ms>0) list.push({type:'W',args:[ms]}); break; }
-    case 'motor12_in':{
-      const v1=numFromInput(b,'M1',0),v2=numFromInput(b,'M2',0),ms=numFromInput(b,'MS',0);
-      list.push({type:'CMD',s:`M12 ${Math.round(v1)} ${Math.round(v2)} ${Math.round(ms)}`}); if(ms>0) list.push({type:'W',args:[ms]}); break; }
-    case 'motor34_dd':{
-      const v3=+b.getFieldValue('M3'),v4=+b.getFieldValue('M4'),ms=+b.getFieldValue('MS');
-      list.push({type:'CMD',s:`M34 ${v3} ${v4} ${ms}`}); if(ms>0) list.push({type:'W',args:[ms]}); break; }
-    case 'motor34_in':{
-      const v3=numFromInput(b,'M3',0),v4=numFromInput(b,'M4',0),ms=numFromInput(b,'MS',0);
-      list.push({type:'CMD',s:`M34 ${Math.round(v3)} ${Math.round(v4)} ${Math.round(ms)}`}); if(ms>0) list.push({type:'W',args:[ms]}); break; }
-    case 'servo_dd':{
-      const out=b.getFieldValue('OUT'),ang=+b.getFieldValue('ANG'); list.push({type:'CMD',s:`SV ${out} ${Math.round(ang)}`}); break; }
-    case 'servo_in':{
-      const out=b.getFieldValue('OUT'),ang=numFromInput(b,'ANG',90); list.push({type:'CMD',s:`SV ${out} ${Math.round(ang)}`}); break; }
-    case 'servo_slow':{
-      const out=b.getFieldValue('OUT'),del=numFromInput(b,'DELAY',5),ang=numFromInput(b,'ANG',90);
-      list.push({type:'CMD',s:`SVS ${out} ${Math.round(del)} ${Math.round(ang)}`}); break; }
-    case 'melody':{
-      const p=b.getFieldValue('PITCH'),dur=numFromInput(b,'DUR',200),wait=numFromInput(b,'WAIT',250);
-      list.push({type:'CMD',s:`MEL ${p} ${Math.round(dur)} ${Math.round(wait)}`}); if(wait>0) list.push({type:'W',args:[wait]}); break; }
-    case 'led_ctrl':{
-      const t=b.getFieldValue('TGT'),m=b.getFieldValue('MODE'),v=+b.getFieldValue('VAL'); list.push({type:'CMD',s:`LED ${t} ${m} ${v}`}); break; }
-
-    /* 멀티 서보 블록은 설정/메타 전용 → 코드 생성 없음(주석만) */
-    case 'multi_servo':{
-      const cfg = multiServoConfigs.get(b.id);
-      const n = cfg?.units?.length || 0;
-      list.push({type:'CMD', s:`// multi_servo(${n})`});
+      var v1=+b.getFieldValue('M1'),
+          v2=+b.getFieldValue('M2'),
+          ms=+b.getFieldValue('MS');
+      list.push({type:'CMD',s:'M12 '+v1+' '+v2+' '+ms});
+      if(ms>0) list.push({type:'W',args:[ms]});
       break;
     }
-
-    case 'repeat_forever':{
-      const inner=[]; const first=b.getInputTargetBlock('DO'); walkChain(first, inner);
-      list.push({type:'LOOP_INF',body:inner}); break; }
-    case 'controls_repeat_ext':{
-      const times=Math.max(0, numFromInput(b,'TIMES',1));
-      const inner=[]; const first=b.getInputTargetBlock('DO'); walkChain(first, inner);
-      list.push({type:'FOR',count:times,body:inner}); break; }
-    case 'controls_if':{
-      const branches=[]; let i=0;
-      while(b.getInput('IF'+i)){
-        const cond = exprFromBlock(b.getInputTargetBlock('IF'+i));
-        const inner=[]; const first=b.getInputTargetBlock('DO'+i); walkChain(first, inner);
-        branches.push({cond, body:inner}); i++;
-      }
-      if(b.getInput('ELSE')){
-        const inner=[]; const first=b.getInputTargetBlock('ELSE'); walkChain(first, inner);
-        branches.push({cond:null, body:inner});
-      }
-      list.push({type:'IF',branches}); break;
+    case 'motor12_in':{
+      var v1n=numFromInput(b,'M1',0),
+          v2n=numFromInput(b,'M2',0),
+          msn=numFromInput(b,'MS',0);
+      list.push({type:'CMD',s:'M12 '+Math.round(v1n)+' '+Math.round(v2n)+' '+Math.round(msn)});
+      if(msn>0) list.push({type:'W',args:[msn]});
+      break;
     }
-    case 'wait_seconds':{ const s=numFromInput(b,'SEC',1); if(s>0) list.push({type:'W',args:[s*1000]}); break; }
-    case 'control_wait_until':{ const cond=exprFromBlock(b.getInputTargetBlock('COND')); list.push({type:'WAIT_UNTIL',cond}); break; }
-    case 'control_repeat_until':{
-      const cond=exprFromBlock(b.getInputTargetBlock('COND'));
-      const inner=[]; const first=b.getInputTargetBlock('DO'); walkChain(first, inner);
-      list.push({type:'REPEAT_UNTIL',cond,body:inner}); break; }
+    case 'melody':{
+      var p=b.getFieldValue('PITCH'),
+          dur=numFromInput(b,'DUR',200),
+          wait=numFromInput(b,'WAIT',0);
+      list.push({type:'CMD',s:'MEL '+p+' '+Math.round(dur)+' '+Math.round(wait)});
+      if(wait>0) list.push({type:'W',args:[wait]});
+      break;
+    }
+    case 'led_ctrl':{
+      var t=b.getFieldValue('TGT'),
+          m=b.getFieldValue('MODE'),
+          v=+b.getFieldValue('VAL');
+      list.push({type:'CMD',s:'LED '+t+' '+m+' '+v});
+      break;
+    }
+    case 'controls_repeat_ext':{
+      var times=Math.max(0, numFromInput(b,'TIMES',1));
+      var inner=[];
+      var first=b.getInputTargetBlock('DO');
+      walkChain(first, inner);
+      list.push({type:'FOR',count:times,body:inner});
+      break;
+    }
+    case 'wait_seconds':{
+      var s=numFromInput(b,'SEC',1);
+      if(s>0) list.push({type:'W',args:[s*1000]});
+      break;
+    }
   }
 }
-function walkChain(start, list){ for(let n=start; n; n=n.getNextBlock()) walkNode(n, list); }
-
+function walkChain(start, list){
+  for(var n=start; n; n=n.getNextBlock()){
+    walkNode(n, list);
+  }
+}
 function normalizeProgram(list){
-  const out=[];
-  for(const ins of list){
+  var out=[];
+  for(var i=0;i<list.length;i++){
+    var ins=list[i];
     if(ins.type==='CMD'){
-      const prev=out[out.length-1];
+      var prev=out[out.length-1];
       if(prev && prev.type==='CMD' && prev.s===ins.s) continue;
     }else if(ins.type==='W'){
-      if(!Number.isFinite(ins.args?.[0])||ins.args[0]<=0) continue;
-      const prev=out[out.length-1];
-      if(prev && prev.type==='W'){ prev.args[0]+=ins.args[0]; continue; }
+      if(!isFinite(ins.args && ins.args[0]) || ins.args[0]<=0) continue;
+      var prevw=out[out.length-1];
+      if(prevw && prevw.type==='W'){
+        prevw.args[0]+=ins.args[0];
+        continue;
+      }
     }
     out.push(ins);
   }
   return out;
 }
-
-function firstExecutableTopStack(){
-  const tops=ws.getTopBlocks(true);
-  for(const b of tops){
-    if(!b.outputConnection&&(b.nextConnection||b.statementInputCount>0||b.type==='xrobo_start')) return b;
+function buildEventPrograms(){
+  const programs = { F_FRONT:[], F_UP:[], F_DOWN:[], F_LEFT:[], F_RIGHT:[] };
+  var evs = ws.getBlocksByType('xrobo_start', true);
+  for(var i=0;i<evs.length;i++){
+    var code = evs[i].getFieldValue('DIGIT') || 'F_FRONT';
+    var chain = evs[i].getNextBlock();
+    if(!chain) continue;
+    var prog=[];
+    walkChain(chain, prog);
+    var norm = normalizeProgram(prog);
+    if(!programs[code]) programs[code] = [];
+    programs[code] = programs[code].concat(norm);
   }
-  return null;
+  return programs;
 }
-
-function blocksToProgram(){
-  const starts=ws.getBlocksByType('xrobo_start',true);
-  let entry=null, startChain=null;
-  if(starts.length){ entry=starts[0]; startChain=entry.getNextBlock(); }
-  else{ entry=firstExecutableTopStack(); startChain=entry; }
-  if(!entry) return [];
-  const prog=[]; walkChain(startChain, prog);
-  return normalizeProgram(prog);
-}
-
-function programToC(prog){
-  const out=['void setup() {','  // TODO: 핀 초기화','}','', 'void loop() {'];
-  const emit=(list,indent='  ')=>{
-    for(const ins of list){
-      if(ins.type==='CMD'){ out.push(`${indent}${ins.s.startsWith('//')?ins.s:`send("${ins.s}");`}`); }
-      else if(ins.type==='W'){ out.push(`${indent}delay(${ins.args[0]});`); }
-      else if(ins.type==='FOR'){ out.push(`${indent}for (int i=0; i<${ins.count}; ++i) {`); emit(ins.body,indent+'  '); out.push(`${indent}}`); }
-      else if(ins.type==='IF'){
-        let first=true;
-        for(const br of ins.branches){
-          out.push(`${indent}${br.cond!==null?(first?'if':'else if'):'else'} ${br.cond!==null?`(${br.cond}) `:''}{`);
-          first=false; emit(br.body,indent+'  '); out.push(`${indent}}`);
-        }
-      }
-      else if(ins.type==='LOOP_INF'){ out.push(`${indent}while(true){`); emit(ins.body,indent+'  '); out.push(`${indent}}`); }
-      else if(ins.type==='WAIT_UNTIL'){ out.push(`${indent}while (!(${ins.cond||'/* cond */'})) { delay(50); }`); }
-      else if(ins.type==='REPEAT_UNTIL'){ out.push(`${indent}while (!(${ins.cond||'/* cond */'})) {`); emit(ins.body,indent+'  '); out.push(`${indent}  delay(50);`); out.push(`${indent}}`); }
-    }
-  };
-  emit(prog,'  '); out.push('}'); return out.join('\n');
-}
-
-/* 코드뷰 갱신 */
-const codeView=document.getElementById('rightTop');
-let refreshTimer=null;
-function refreshCodeDebounced(){ clearTimeout(refreshTimer); refreshTimer=setTimeout(()=>{ codeView.textContent=programToC(blocksToProgram()); },100); }
-ws.addChangeListener(refreshCodeDebounced); refreshCodeDebounced();
 
 /* ================= 헤더/스케일/풀스크린 ================= */
 function applyHeaderHeight(){
-  const px = document.getElementById('appHeader').offsetHeight || 64;
+  var px = document.getElementById('appHeader').offsetHeight || 64;
   document.documentElement.style.setProperty('--headerH', px+'px');
-  setTimeout(()=>Blockly.svgResize(ws), 60);
+  setTimeout(function(){ Blockly.svgResize(ws); }, 60);
 }
 function applyUiScaleFromWorkspace(){
-  const s = Math.max(.7, Math.min(1.6, ws.getScale()));
+  var s = Math.max(.7, Math.min(1.6, ws.getScale()));
   document.documentElement.style.setProperty('--uiScale', s);
   applyHeaderHeight();
 }
 window.addEventListener('resize', applyHeaderHeight);
 document.addEventListener('fullscreenchange', applyHeaderHeight);
-ws.addChangeListener(ev=>{
-  if(ev && ev.type===Blockly.Events.UI && ev.element==='zoom'){ applyUiScaleFromWorkspace(); }
+ws.addChangeListener(function(ev){
+  if(ev && ev.type===Blockly.Events.UI && ev.element==='zoom'){
+    applyUiScaleFromWorkspace();
+  }
 });
-setInterval(()=>applyUiScaleFromWorkspace(), 200);
+setInterval(function(){ applyUiScaleFromWorkspace(); }, 200);
 applyUiScaleFromWorkspace();
 applyHeaderHeight();
 
-/* ================= BLE & 실행 & 실시간 ================= */
-const SERVICE_UUID=0xFFF0;
-let bleDevice=null,bleServer=null,bleService=null,writeChar=null,notifyChar=null;
-let connectToken=0;
-let runToken=0;
-let isConnected=false, isRunning=false;
-let realTime=false; // ★ 실시간 전송
+/* ================= BLE & 로그 ================= */
+var SERVICE_UUID=0xFFF0;
+var bleDevice=null,bleServer=null,bleService=null,writeChar=null,notifyChar=null;
+var isConnected=false, isRunning=false, isFullscreenRun=false;
+var $=id=>document.getElementById(id);
 
-const $=id=>document.getElementById(id);
-const log=m=>{ const L=$('log'); L.textContent+=m+"\n"; L.scrollTop=L.scrollHeight; };
-const btnConnect=$('connectToggle'), btnRun=$('runToggle'), dot=$('statusDot');
-const btnRt=$('rtToggle');
-const enc=s=>new TextEncoder().encode(s);
+/* 로그: 우측 패널 + 전체화면 로그 둘 다에 출력 */
+var log=function(m){
+  var L=$('log');
+  if(L){
+    L.textContent+=m+"\n";
+    L.scrollTop=L.scrollHeight;
+  }
+  var OL=$('ovLog');
+  if(OL){
+    OL.textContent+=m+"\n";
+    OL.scrollTop=OL.scrollHeight;
+  }
+};
 
-function resetBleRefs(){ bleDevice=null; bleServer=null; bleService=null; writeChar=null; notifyChar=null; }
+var dot=$('statusDot');
+var btnConnect=$('connectToggle'),
+    btnRun    =$('runToggle'),
+    btnTest   =$('testBtn');
+
+var enc = s=> new TextEncoder().encode(s);
+
+function resetBleRefs(){
+  bleDevice=null;
+  bleServer=null;
+  bleService=null;
+  writeChar=null;
+  notifyChar=null;
+}
 function setConnected(v){
   isConnected=v;
   btnConnect.textContent=v?'해제':'연결';
-  btnRun.disabled=!v;
-  dot.classList.toggle('on',v); dot.classList.toggle('off',!v);
+  dot.classList.toggle('on',v);
+  dot.classList.toggle('off',!v);
   dot.textContent=v?'on':'off';
   if(!v) setRunning(false);
 }
 function setRunning(v){
   isRunning=v;
-  btnRun.textContent=v?'■ 정지':'▶ 실행';
+  btnRun.textContent = v ? '■ 정지' : '실행';
   btnRun.style.background = v ? '#ef4444' : '#16a34a';
-}
-function setRealtime(on){
-  realTime=!!on;
-  btnRt.classList.toggle('on', realTime);
-  btnRt.textContent = realTime ? '실시간: ON' : '실시간: OFF';
-}
-btnRt.addEventListener('click', ()=> setRealtime(!realTime));
-
-async function sendImmediate(s){
-  if(!realTime) return;
-  if(!writeChar) return;
-  try{ await writeChar.writeValue(enc(s+'\n')); log('➡️ '+s); }
-  catch(e){ console.error(e); log('⚠️ 전송 실패: '+e); }
+  btnTest.disabled = v;
 }
 
-function onDisconnected(ev){
-  if(bleDevice && ev?.target && ev.target !== bleDevice) return;
-  log('🔌 해제됨');
-  setConnected(false); resetBleRefs();
-}
-
-async function connectBLE(){
-  if(!navigator.bluetooth){ alert('이 브라우저는 Web Bluetooth 미지원입니다.'); return; }
-  const myToken=++connectToken;
-  try{
-    const dev = await navigator.bluetooth.requestDevice({
-      filters:[{ namePrefix:'XROBO' }],
-      optionalServices:[SERVICE_UUID, 0xFFF3, 0xFFF4]
-    });
-    if(connectToken!==myToken) return;
-    try{ bleDevice?.removeEventListener('gattserverdisconnected', onDisconnected); }catch(_){}
-    resetBleRefs();
-    bleDevice=dev;
-    bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
-
-    bleServer=await bleDevice.gatt.connect();
-    if(connectToken!==myToken) return;
-    bleService=await bleServer.getPrimaryService(SERVICE_UUID);
-
-    try{ writeChar=await bleService.getCharacteristic(0xFFF3);}catch(_){}
-    try{ notifyChar=await bleService.getCharacteristic(0xFFF4);}catch(_){}
-    if(!writeChar || notifyChar==null){
-      const cs=await bleService.getCharacteristics();
-      for(const ch of cs){
-        const p=ch.properties;
-        if(!writeChar && (p.write||p.writeWithoutResponse)) writeChar=ch;
-        if(!notifyChar && p.notify) notifyChar=ch;
-      }
-    }
-    if(!writeChar) throw new Error('write 특성을 찾지 못했습니다.');
-    if(notifyChar){
-      await notifyChar.startNotifications();
-      notifyChar.addEventListener('characteristicvaluechanged',ev=>{
-        const v=new TextDecoder().decode(ev.target.value); log('⬅️ '+v);
+/* BLE connect/disconnect */
+function connectBLE(){
+  if(!navigator.bluetooth){
+    alert('이 브라우저는 Web Bluetooth 미지원입니다.');
+    return;
+  }
+  (async function(){
+    try{
+      var dev = await navigator.bluetooth.requestDevice({
+        filters:[{ namePrefix:'XROBO' }],
+        optionalServices:[SERVICE_UUID, 0xFFF3, 0xFFF4]
       });
-    }
-    if(connectToken!==myToken) return;
-    setConnected(true);
-    log('✅ 연결: '+(dev.name||'(이름 없음)'));
-  }catch(e){
-    console.error(e); log('❌ 연결 실패: '+e);
-    setConnected(false); resetBleRefs();
-  }
-}
-function disconnectBLE(){
-  try{ bleDevice?.gatt?.disconnect(); }catch(_){}
-  setConnected(false); resetBleRefs(); ++connectToken;
-}
-btnConnect.onclick = ()=>{ isConnected ? disconnectBLE() : connectBLE(); };
+      try{
+        if (bleDevice && bleDevice.removeEventListener){
+          bleDevice.removeEventListener('gattserverdisconnected', onDisconnected);
+        }
+      }catch(e){}
+      resetBleRefs();
+      bleDevice=dev;
+      if (bleDevice && bleDevice.addEventListener){
+        bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+      }
 
-/* 실행 루프 */
-async function sendCmdIfActive(s, myRun){
-  if(myRun.canceled()) return;
-  if(!writeChar) throw new Error('BLE 미연결');
-  await writeChar.writeValue(enc(s+'\n'));
-  log('➡️ '+s);
-}
-async function sleepCancelable(ms, myRun){
-  let remain = Math.max(0, ms);
-  while(remain > 0){
-    if(myRun.canceled()) return;
-    const slice = Math.min(50, remain);
-    await new Promise(r=>setTimeout(r, slice));
-    remain -= slice;
-  }
-}
-btnRun.onclick = async ()=>{
-  if(!isRunning){
-    if(!writeChar){ alert('먼저 BLE 연결!'); return; }
-    setRunning(true);
-    const prog = blocksToProgram();
-    if(!prog.length){ alert('실행할 블록이 없습니다.\n"XROBO start" 또는 최상단 스택을 배치하세요.'); setRunning(false); return; }
-    const myRunId = ++runToken;
-    const myRun = { canceled: ()=> myRunId !== runToken || !isRunning };
+      bleServer=await bleDevice.gatt.connect();
+      bleService=await bleServer.getPrimaryService(SERVICE_UUID);
 
-    const runLoop = async(list)=>{
-      for(let i=0;i<list.length;i++){
-        if(myRun.canceled()) return;
-        const ins=list[i];
-        if(ins.type==='CMD'){
-          await sendCmdIfActive(ins.s, myRun);
-        }else if(ins.type==='W'){
-          await sleepCancelable(ins.args[0], myRun);
-        }else if(ins.type==='FOR'){
-          for(let k=0; k<ins.count; k++){
-            if(myRun.canceled()) return;
-            await runLoop(ins.body);
-          }
-        }else if(ins.type==='IF'){
-          /* 웹 런타임 조건평가 없음 */
-        }else if(ins.type==='WAIT_UNTIL'){
-          await sleepCancelable(50, myRun); i--;
-        }else if(ins.type==='REPEAT_UNTIL'){
-          let guard=0;
-          while(!myRun.canceled() && guard<200){
-            await runLoop(ins.body);
-            await sleepCancelable(50, myRun);
-            guard++;
-          }
-        }else if(ins.type==='LOOP_INF'){
-          while(!myRun.canceled()){
-            await runLoop(ins.body);
-          }
+      try{ writeChar=await bleService.getCharacteristic(0xFFF3);}catch(e){}
+      try{ notifyChar=await bleService.getCharacteristic(0xFFF4);}catch(e){}
+      if(!writeChar || notifyChar==null){
+        var cs=await bleService.getCharacteristics();
+        for(var i=0;i<cs.length;i++){
+          var ch=cs[i], p=ch.properties||{};
+          if(!writeChar && (p.write||p.writeWithoutResponse)) writeChar=ch;
+          if(!notifyChar && p.notify) notifyChar=ch;
         }
       }
-    };
-    try{ await runLoop(prog); }
-    catch(e){ console.error(e); log('⚠️ 실행 오류: '+e); }
-    finally{ if(!myRun.canceled()) setRunning(false); }
-  }else{
-    setRunning(false);
-    runToken++;
-    try{ if(writeChar) await writeChar.writeValue(enc('S\n')); }catch(_){}
-  }
-};
+      if(!writeChar) throw new Error('write 특성을 찾지 못했습니다.');
+      if(notifyChar){
+        await notifyChar.startNotifications();
+        if (notifyChar.addEventListener){
+          notifyChar.addEventListener('characteristicvaluechanged',function(ev){
+            try{
+              var v=new TextDecoder().decode(ev.target.value||new Uint8Array());
+              log('⬅️ '+v.trim());
+            }catch(e){}
+          });
+        }
+      }
+      setConnected(true);
+      log('✅ 연결: '+(dev.name||'(이름 없음)'));
+    }catch(e){
+      console.error(e);
+      log('❌ 연결 실패: '+e);
+      setConnected(false);
+      resetBleRefs();
+    }
+  })();
+}
+function onDisconnected(){
+  log('🔌 해제됨');
+  setConnected(false);
+  resetBleRefs();
+}
+function disconnectBLE(){
+  try{
+    if (bleDevice && bleDevice.gatt) bleDevice.gatt.disconnect();
+  }catch(e){}
+  setConnected(false);
+  resetBleRefs();
+}
+btnConnect.onclick = ()=> isConnected ? disconnectBLE() : connectBLE();
 
-/* 실행창 토글 핸들 */
-const panelHandle=document.getElementById('panelHandle');
+/* ================= 저장/불러오기 ================= */
+function serializeProject(){
+  var xmlDom = Blockly.Xml.workspaceToDom(ws);
+  var xmlText = Blockly.Xml.domToText(xmlDom);
+  return JSON.stringify({type:'xrobo_project_v1', xml: xmlText}, null, 2);
+}
+function saveProject(){
+  var data = serializeProject();
+  var suggestedName = 'xrobo_project.json';
+  if(window.showSaveFilePicker){
+    (async function(){
+      try{
+        var handle = await showSaveFilePicker({
+          suggestedName,
+          types:[{description:'XROBO Project', accept:{'application/json':['.json']}}]
+        });
+        var stream = await handle.createWritable();
+        await stream.write(new Blob([data], {type:'application/json'}));
+        await stream.close();
+        log('💾 저장 완료');
+      }catch(e){
+        if(!(e && e.name==='AbortError')) log('⚠️ 저장 실패: '+e);
+      }
+    })();
+  }else{
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([data], {type:'application/json'}));
+    a.download=suggestedName;
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); }, 1000);
+    log('💾 저장(다운로드) 완료');
+  }
+}
+function loadProject(){
+  (async function(){
+    try{
+      var text='';
+      if(window.showOpenFilePicker){
+        var arr = await showOpenFilePicker({
+          types:[{description:'XROBO Project', accept:{'application/json':['.json']}}]
+        });
+        var handle = arr[0];
+        var file = await handle.getFile();
+        text = await file.text();
+      }else{
+        var input=document.createElement('input');
+        input.type='file';
+        input.accept='.json,application/json';
+        var pick = new Promise((res,rej)=>{
+          input.onchange=()=>{ res(input.files[0]||null); };
+          input.onerror=rej;
+        });
+        input.click();
+        var file = await pick;
+        if(!file) return;
+        text = await file.text();
+      }
+      var obj = JSON.parse(text);
+      if(!obj || obj.type!=='xrobo_project_v1') throw new Error('알 수 없는 프로젝트 형식');
+      ws.clear();
+      var parser = new DOMParser();
+      var xml = parser.parseFromString(obj.xml, 'text/xml');
+      Blockly.Xml.domToWorkspace(xml.documentElement, ws);
+      log('📂 불러오기 완료');
+    }catch(e){
+      if(!(e && e.name==='AbortError')) alert('불러오기 실패: '+e);
+    }
+  })();
+}
+
+/* ================= 오른쪽 패널: 로그 높이 리사이저 ================= */
+(function(){
+  var divider = document.getElementById('rightDivider');
+  var root = document.documentElement;
+  var dragging=false, startY=0, startH=0, rightH=0;
+  function pxToNum(px){ return Number(String(px).replace('px',''))||0; }
+  function onDown(e){
+    e.preventDefault();
+    dragging=true;
+    startY=('touches' in e ? e.touches[0].clientY : e.clientY);
+    startH=pxToNum(getComputedStyle(root).getPropertyValue('--logH'));
+    rightH=document.getElementById('right').clientHeight;
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('touchmove', onMove, {passive:false});
+    window.addEventListener('mouseup', onUp, {once:true});
+    window.addEventListener('touchend', onUp, {once:true});
+  }
+  function onMove(e){
+    if(!dragging) return;
+    var y=('touches' in e ? e.touches[0].clientY : e.clientY);
+    if('touches' in e) e.preventDefault();
+    var delta = startY - y;
+    var nh = startH + delta;
+    var minH=90, maxH=Math.max(130, Math.floor(rightH*0.8));
+    nh=Math.min(maxH, Math.max(minH, nh));
+    root.style.setProperty('--logH', nh+'px');
+  }
+  function onUp(){
+    dragging=false;
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('touchmove', onMove);
+  }
+  divider.addEventListener('mousedown', onDown);
+  divider.addEventListener('touchstart', onDown, {passive:false});
+})();
+
+/* ================= 패널 토글 & 전체화면 버튼 ================= */
+var panelHandle=document.getElementById('panelHandle');
 function syncHandle(){
-  const collapsed = document.body.classList.contains('panel-collapsed');
+  var collapsed = document.body.classList.contains('panel-collapsed');
   panelHandle.classList.toggle('open',   !collapsed);
   panelHandle.classList.toggle('closed',  collapsed);
   panelHandle.title = collapsed ? '실행창 열기' : '실행창 닫기';
 }
-function togglePanel(){ document.body.classList.toggle('panel-collapsed'); syncHandle(); setTimeout(()=>Blockly.svgResize(ws),60); }
+function togglePanel(){
+  document.body.classList.toggle('panel-collapsed');
+  syncHandle();
+  setTimeout(()=>{ Blockly.svgResize(ws); },60);
+}
 panelHandle.addEventListener('click', togglePanel);
 syncHandle();
 
-/* 전체화면 토글 */
-const fsBtn=document.getElementById('fsBtn');
-async function enterFS(){ const el=document.documentElement; if(el.requestFullscreen) await el.requestFullscreen(); }
-async function exitFS(){ if(document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen(); }
+var fsBtn=document.getElementById('fsBtn');
+async function enterFS(){
+  var el=document.documentElement;
+  if(el.requestFullscreen) await el.requestFullscreen();
+}
+async function exitFS(){
+  if(document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+}
 function syncFSLabel(){
-  const a = !!document.fullscreenElement;
+  var a = !!document.fullscreenElement;
   document.body.classList.toggle('fs-active', a);
   fsBtn.textContent = a ? '화면축소' : '전체화면';
   fsBtn.title = a ? '화면 축소로 전환' : '전체화면으로 전환';
   applyHeaderHeight();
 }
-fsBtn.onclick=async()=>{ if(document.fullscreenElement) await exitFS(); else await enterFS(); };
+fsBtn.onclick=async function(){
+  if(document.fullscreenElement) await exitFS();
+  else await enterFS();
+};
 document.addEventListener('fullscreenchange', syncFSLabel);
 syncFSLabel();
 
-/* ================= 멀티 서보 설정 모달 구현 ================= */
-const servoModal = document.getElementById('servoModal');
-const boardEl = document.getElementById('board');
-const addServoBtn = document.getElementById('addServoBtn');
-const applyBgBtn = document.getElementById('applyBg');
-const bgUrlInput = document.getElementById('bgUrl');
-const closeModalBtn = document.getElementById('closeModal');
+/* ================= 실행/테스트 & 오버레이 제어 ================= */
+var overlay=document.getElementById('playOverlay');
+var eventPrograms = {};
+var queue = [];
+var queueBusy = false;
+var cancelToken = 0;
 
-let currentBlock = null; // 현재 설정중인 멀티 서보 블록
-let unitSeq = 0;         // 유닛 생성 순서(초기 위치 분산)
-const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
-const toRad=d=>d*Math.PI/180;
-const toDeg=r=>r*180/Math.PI;
-const valToScreenDeg = v => 225 - v;  // 0=225°, 135=90°, 270=315°
-function nearestAngle(target, reference){
-  const c=[target-360, target, target+360]; let best=c[0], bd=Math.abs(c[0]-reference);
-  for(const x of c){ const d=Math.abs(x-reference); if(d<bd){ bd=d; best=x; } } return best;
+function sendRaw(s){
+  if(!writeChar){
+    log('➡️(BLE 미연결) '+s);
+    return Promise.resolve();
+  }
+  return writeChar.writeValue(enc(s+'\n'))
+    .then(()=>{ log('➡️ '+s); })
+    .catch(e=>{ log('⚠️ 전송 실패: '+e); });
 }
-function projectToArcWithSide(rawDeg, dx, lastScrDeg){
-  let a = ((rawDeg%360)+360)%360; if(a>180) a-=360;
-  a = nearestAngle(a, lastScrDeg);
-  if(a >= -45 && a <= 225) return a;
-  return dx >= 0 ? -45 : 225;
-}
-
-/* 유닛 생성/이벤트 */
-function createUnit(state){
-  const {name, x, y} = state;
-  const unit = document.createElement('div');
-  unit.className='unit'; unit.style.left=(x||10)+'px'; unit.style.top=(y||48)+'px'; unit.dataset.name=name;
-
-  // 헤더 + 토글
-  const handle = document.createElement('div'); handle.className='handle'; handle.textContent=name;
-  const pwrTop = document.createElement('div'); pwrTop.className='pwr-top'+(state.power? '' : ' off'); pwrTop.textContent=state.power?'ON':'OFF';
-  handle.appendChild(pwrTop); unit.appendChild(handle);
-
-  // 행(각도/속도)
-  const row = document.createElement('div'); row.className='row';
-  const num = document.createElement('div'); num.className='numbox';
-  const inp = document.createElement('input'); inp.type='number'; inp.min='0'; inp.max='270'; inp.step='1'; inp.value=String(state.angle ?? 135);
-  num.appendChild(inp);
-  const spdBox = document.createElement('div'); spdBox.className='speedbox';
-  const spdSel = document.createElement('select');
-  for(let i=1;i<=20;i++){ const o=document.createElement('option'); o.value=String(i); o.textContent=String(i); spdSel.appendChild(o); }
-  spdSel.value = String(state.speed ?? 10);
-  spdBox.appendChild(spdSel);
-  row.append(num, spdBox); unit.appendChild(row);
-
-  // 다이얼
-  const svgNS='http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS,'svg');
-  svg.setAttribute('class','dial-svg'); svg.setAttribute('viewBox','0 0 100 100'); svg.setAttribute('tabindex','0');
-
-  const defs = document.createElementNS(svgNS,'defs');
-  const gradId='gDot_'+name;
-  const grad=document.createElementNS(svgNS,'radialGradient');
-  grad.setAttribute('id',gradId); grad.setAttribute('cx','30%'); grad.setAttribute('cy','30%');
-  let s1=document.createElementNS(svgNS,'stop'); s1.setAttribute('offset','0%'); s1.setAttribute('stop-color','#e0edff');
-  let s2=document.createElementNS(svgNS,'stop'); s2.setAttribute('offset','45%'); s2.setAttribute('stop-color','#93c5fd');
-  let s3=document.createElementNS(svgNS,'stop'); s3.setAttribute('offset','100%'); s3.setAttribute('stop-color','#3b82f6');
-  grad.append(s1,s2,s3); defs.appendChild(grad); svg.appendChild(defs);
-
-  const ring=document.createElementNS(svgNS,'circle');
-  ring.setAttribute('class','ring-base'); ring.setAttribute('cx','50'); ring.setAttribute('cy','50'); ring.setAttribute('r','40');
-  svg.appendChild(ring);
-
-  const mkTick = ()=>document.createElementNS(svgNS,'line');
-  const tick0=mkTick(), tick135=mkTick(), tick270=mkTick();
-  tick0.setAttribute('class','tick'); tick135.setAttribute('class','tick'); tick270.setAttribute('class','tick');
-  svg.append(tick0,tick135,tick270);
-
-  const dot=document.createElementNS(svgNS,'circle');
-  dot.setAttribute('class','dot blue'); dot.setAttribute('r','5.4'); dot.setAttribute('fill', `url(#${gradId})`);
-  svg.appendChild(dot);
-
-  unit.appendChild(svg);
-  boardEl.appendChild(unit);
-
-  // 내부 상태 합치기
-  state.els = {unit, handle, pwrTop, row, inp, spdSel, svg, ring, tick0, tick135, tick270, dot, gradId};
-  state.lastScrDeg = valToScreenDeg(state.angle ?? 135);
-
-  function layoutTicks(){
-    const R=40, S=2, Rout=R+S/2, OUTSET=3, L=8, R1=Rout+OUTSET, R2=R1+L, CX=50, CY=50;
-    function setTick(el,deg){ const a=toRad(deg);
-      const x1=CX+R1*Math.cos(a), y1=CY-R1*Math.sin(a);
-      const x2=CX+R2*Math.cos(a), y2=CY-R2*Math.sin(a);
-      el.setAttribute('x1',x1); el.setAttribute('y1',y1); el.setAttribute('x2',x2); el.setAttribute('y2',y2);
+async function runList(list, localToken){
+  for(var i=0;i<list.length;i++){
+    var ins=list[i];
+    if(localToken !== cancelToken) return;
+    if(ins.type==='CMD'){
+      await sendRaw(ins.s);
+    }else if(ins.type==='W'){
+      var ms = (ins.args && ins.args[0]) ? ins.args[0] : 0;
+      await new Promise(r=>setTimeout(r, ms));
+    }else if(ins.type==='FOR'){
+      for(var k=0;k<ins.count;k++){
+        if(localToken !== cancelToken) return;
+        await runList(ins.body, localToken);
+      }
     }
-    setTick(state.els.tick0,225); setTick(state.els.tick135,90); setTick(state.els.tick270,315);
   }
-  function placeDot(){
-    if(!state.els.dot.classList.contains('red')) state.els.dot.setAttribute('fill', `url(#${state.els.gradId})`);
-    const R = 30; // 안쪽 경로
-    const a=toRad(valToScreenDeg(state.angle));
-    const x=50+R*Math.cos(a), y=50-R*Math.sin(a);
-    state.els.dot.setAttribute('cx',x); state.els.dot.setAttribute('cy',y);
-  }
-  function render(){ state.els.inp.value=Math.round(state.angle); state.els.spdSel.value=String(state.speed); placeDot(); }
-  layoutTicks(); render();
-
-  // ON/OFF (모달에서는 드래그 차단)
-  const stopProp = ev => ev.stopPropagation();
-  state.els.pwrTop.addEventListener('mousedown', stopProp);
-  state.els.pwrTop.addEventListener('touchstart', stopProp, {passive:false});
-  state.els.pwrTop.addEventListener('click', ev=>{
-    ev.stopPropagation();
-    state.power = !state.power;
-    state.els.pwrTop.classList.toggle('off', !state.power);
-    state.els.pwrTop.textContent = state.power?'ON':'OFF';
-    render();
-    sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`);
-  });
-
-  // 각도/속도
-  state.els.inp.addEventListener('change', ()=>{
-    const v=Number(state.els.inp.value);
-    if(Number.isFinite(v)){ state.angle=clamp(Math.round(v),0,270); render(); sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`); }
-    else render();
-  });
-  state.els.spdSel.addEventListener('change', ()=>{
-    state.speed = clamp(parseInt(state.els.spdSel.value||'10',10)||10,1,20);
-    render(); sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`);
-  });
-
-  // 다이얼
-  function setDotActive(on){
-    state.els.dot.classList.toggle('red', !!on);
-    state.els.dot.classList.toggle('blue', !on);
-    if(!on) state.els.dot.setAttribute('fill', `url(#${state.els.gradId})`);
-  }
-  function pointToVal(clientX, clientY){
-    const r=state.els.svg.getBoundingClientRect();
-    const cx=r.left+r.width/2, cy=r.top+r.height/2;
-    const dx=clientX-cx, dy=cy-clientY;
-    const raw = toDeg(Math.atan2(dy, dx));
-    const scr = projectToArcWithSide(raw, dx, state.lastScrDeg);
-    state.lastScrDeg = scr;
-    return clamp(Math.round(225 - scr), 0, 270);
-  }
-  function dialDown(e){
-    if(!state.power) return;
-    setDotActive(true);
-    const p=('touches' in e)?e.touches[0]:e;
-    state.angle = pointToVal(p.clientX, p.clientY);
-    render(); sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`);
-    window.addEventListener('mousemove', dialMove);
-    window.addEventListener('touchmove', dialMove, {passive:false});
-    window.addEventListener('mouseup', dialUp, {once:true});
-    window.addEventListener('touchend', dialUp, {once:true});
-  }
-  function dialMove(e){
-    if(!state.power) return;
-    const p=('touches' in e)?e.touches[0]:e;
-    if('touches' in e) e.preventDefault();
-    state.angle = pointToVal(p.clientX, p.clientY);
-    render(); sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`);
-  }
-  function dialUp(){
-    setDotActive(false);
-    window.removeEventListener('mousemove', dialMove);
-    window.removeEventListener('touchmove', dialMove);
-  }
-  state.els.svg.addEventListener('mousedown', dialDown);
-  state.els.svg.addEventListener('touchstart', dialDown, {passive:false});
-  state.els.svg.addEventListener('wheel', e=>{
-    if(!state.power) return; e.preventDefault();
-    const d=Math.sign(e.deltaY);
-    state.angle=clamp(state.angle - d*1,0,270); render(); sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`);
-  }, {passive:false});
-
-  // 유닛 드래그(헤더로만)
-  function unitDown(e){
-    if(e.currentTarget !== state.els.handle) return;
-    if(e.target.closest('.pwr-top')) return;
-    const rect=state.els.unit.getBoundingClientRect();
-    const p=('touches' in e)?e.touches[0]:e;
-    const dragDx=p.clientX-rect.left, dragDy=p.clientY-rect.top;
-    state.els.unit.classList.add('dragging');
-    const move = ev=>{
-      const q=('touches' in ev)?ev.touches[0]:ev; if('touches' in ev) ev.preventDefault();
-      const b=boardEl.getBoundingClientRect();
-      let nx=q.clientX-b.left-dragDx, ny=q.clientY-b.top-dragDy;
-      nx=clamp(nx,0,b.width-state.els.unit.offsetWidth);
-      ny=clamp(ny,46,b.height-state.els.unit.offsetHeight);
-      state.els.unit.style.left=nx+'px'; state.els.unit.style.top=ny+'px';
-    };
-    const up = ()=>{
-      state.els.unit.classList.remove('dragging');
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('touchmove', move);
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('touchmove', move, {passive:false});
-    window.addEventListener('mouseup', up, {once:true});
-    window.addEventListener('touchend', up, {once:true});
-    state.els.unit.style.zIndex = String(Math.floor(Date.now()/1000));
-  }
-  state.els.handle.addEventListener('mousedown', unitDown);
-  state.els.handle.addEventListener('touchstart', unitDown, {passive:false});
 }
-
-/* 모달 열기/닫기/저장 */
-function openServoModal(block){
-  currentBlock = block;
-  boardEl.innerHTML = '';
-  unitSeq = 0;
-
-  let cfg = multiServoConfigs.get(block.id);
-  if(!cfg){
-    cfg = { bgUrl:'', units:[] };
-    multiServoConfigs.set(block.id, cfg);
-  }
-  if(cfg.bgUrl) boardEl.style.backgroundImage = `url("${cfg.bgUrl}")`; else boardEl.style.backgroundImage='';
-  bgUrlInput.value = cfg.bgUrl || '';
-
-  if(cfg.units.length === 0){
-    cfg.units.push({name:'S1', angle:135, speed:10, power:true, x:12, y:56});
-  }
-  cfg.units.forEach(u => createUnit(u));
-
-  setRealtime(realTime);
-  servoModal.classList.add('show');
-  servoModal.setAttribute('aria-hidden','false');
-}
-function closeServoModalAndSave(){
-  if(!currentBlock) return;
-  const cfg = multiServoConfigs.get(currentBlock.id) || {bgUrl:'', units:[]};
-  cfg.bgUrl = bgUrlInput.value.trim();
-  cfg.units = Array.from(boardEl.querySelectorAll('.unit')).map(u=>{
-    const name = u.dataset.name;
-    const inp = u.querySelector('.numbox input');
-    const spd = u.querySelector('.speedbox select');
-    const on  = !u.querySelector('.pwr-top').classList.contains('off');
-    return {
-      name,
-      angle: Number(inp.value)||135,
-      speed: Number(spd.value)||10,
-      power: on,
-      x: parseInt(u.style.left)||10,
-      y: parseInt(u.style.top)||48
-    };
-  });
-  multiServoConfigs.set(currentBlock.id, cfg);
-  currentBlock.setFieldValue(String(cfg.units.length), 'COUNT');
-
-  if(cfg.bgUrl) boardEl.style.backgroundImage = `url("${cfg.bgUrl}")`; else boardEl.style.backgroundImage='';
-
-  servoModal.classList.remove('show');
-  servoModal.setAttribute('aria-hidden','true');
-  currentBlock = null;
-}
-
-/* 모달 버튼들 */
-addServoBtn.addEventListener('click', ()=>{
-  if(!currentBlock) return;
-  const cfg = multiServoConfigs.get(currentBlock.id) || {bgUrl:'', units:[]};
-  const idx = cfg.units.length+1;
-  const name = 'S'+idx;
-  const x = 12 + (unitSeq%8)*16; unitSeq++;
-  const y = 56 + Math.floor(unitSeq/8)*20;
-  const st = {name, angle:135, speed:10, power:true, x, y};
-  cfg.units.push(st);
-  createUnit(st);
-});
-applyBgBtn.addEventListener('click', ()=>{
-  const url=(bgUrlInput.value||'').trim();
-  boardEl.style.backgroundImage = url ? `url("${url}")` : '';
-});
-closeModalBtn.addEventListener('click', closeServoModalAndSave);
-servoModal.addEventListener('click', (e)=>{ if(e.target===servoModal) closeServoModalAndSave(); });
-
-/* ================= 저장 / 불러오기 (버전 호환) ================= */
-const btnSave=$('saveBtn'), btnLoad=$('loadBtn');
-
-/* Blockly XML/Serialization 호환 래퍼 */
-function textToDomCompat(xmlText){
-  if (Blockly.Xml && typeof Blockly.Xml.textToDom === 'function') return Blockly.Xml.textToDom(xmlText);
-  if (Blockly.utils && Blockly.utils.xml && typeof Blockly.utils.xml.textToDom === 'function') return Blockly.utils.xml.textToDom(xmlText);
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xmlText, 'text/xml');
-  const perr = doc.getElementsByTagName('parsererror')[0];
-  if (perr) throw new Error('XML 파싱 오류');
-  return doc; // Document 반환
-}
-function domToTextCompat(dom){
-  if (Blockly.Xml && typeof Blockly.Xml.domToText === 'function') return Blockly.Xml.domToText(dom);
-  if (Blockly.utils && Blockly.utils.xml && typeof Blockly.utils.xml.domToText === 'function') return Blockly.utils.xml.domToText(dom);
-  return new XMLSerializer().serializeToString(dom);
-}
-function workspaceToDomCompat(workspace){
-  if (Blockly.Xml && typeof Blockly.Xml.workspaceToDom === 'function') return Blockly.Xml.workspaceToDom(workspace);
-  return null; // 최신 serialization만 있는 빌드일 수 있음
-}
-function domToWorkspaceCompat(dom, workspace){
-  if (Blockly.Xml && typeof Blockly.Xml.domToWorkspace === 'function') return Blockly.Xml.domToWorkspace(dom, workspace);
-  throw new Error('이 Blockly 빌드는 XML 로더(domToWorkspace)를 지원하지 않습니다.');
-}
-function workspaceSaveJsonCompat(workspace){
-  if (Blockly.serialization && Blockly.serialization.workspaces && typeof Blockly.serialization.workspaces.save === 'function'){
-    return Blockly.serialization.workspaces.save(workspace);
-  }
-  return null;
-}
-function workspaceLoadJsonCompat(state, workspace){
-  if (Blockly.serialization && Blockly.serialization.workspaces && typeof Blockly.serialization.workspaces.load === 'function'){
-    Blockly.serialization.workspaces.load(state, workspace);
-    return true;
-  }
-  return false;
-}
-
-function ts(){
-  const d=new Date();
-  const pad=n=>String(n).padStart(2,'0');
-  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}
-function buildProjectPayload(){
-  if(servoModal.classList.contains('show')) closeServoModalAndSave();
-
-  let xmlText = null;
-  const dom = workspaceToDomCompat(ws);
-  if(dom) xmlText = domToTextCompat(dom);
-
-  const jsonState = workspaceSaveJsonCompat(ws); // 일부 빌드 대비 백업
-
-  const entries = {};
-  for(const [k,v] of multiServoConfigs.entries()){
-    entries[k] = { bgUrl: v.bgUrl||'', units: (v.units||[]).map(u=>({
-      name: u.name, angle: u.angle, speed: u.speed, power: !!u.power, x: u.x, y: u.y
-    }))};
-  }
-
-  return {
-    format: 'xrobo-ble-v1',
-    time: new Date().toISOString(),
-    workspaceXml: xmlText,      // 선호
-    workspaceJson: jsonState,   // 백업
-    multiServoConfigs: entries,
-    ui: { realTime }
-  };
-}
-function fallbackDownload(filename, text, type='application/json'){
-  const blob=new Blob([text],{type});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url; a.download=filename; document.body.appendChild(a); a.click();
-  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
-}
-
-async function saveProject(){
+async function processQueue(localToken){
+  if(queueBusy) return;
+  queueBusy = true;
   try{
-    const data = buildProjectPayload();
-    const json = JSON.stringify(data, null, 2);
-    const defaultName = `xrobo_project_${ts()}.xrobo.json`;
-
-    if(window.showSaveFilePicker){
-      const handle = await window.showSaveFilePicker({
-        suggestedName: defaultName,
-        types: [{
-          description: 'XROBO Project',
-          accept: { 'application/json': ['.xrobo.json'] }
-        }]
-      });
-      const stream = await handle.createWritable();
-      await stream.write(json);
-      await stream.close();
-      log('💾 저장 완료');
-    }else{
-      const name = prompt('저장 파일명을 입력하세요 (.xrobo.json 포함)', defaultName) || defaultName;
-      fallbackDownload(name, json);
-      log('💾 저장 완료(폴백)');
+    while(queue.length && localToken === cancelToken){
+      var item = queue.shift();
+      await runList(item.list, localToken);
     }
-  }catch(err){
-    console.error(err);
-    alert('저장 실패: '+(err?.message||err));
+  }finally{
+    queueBusy = false;
+    /* ★ 이벤트 실행이 끝나면 즉시 다시 인식 시작(0.5초 기다리지 않도록 타임스탬프 초기화) ★ */
+    try{ panelLastDetectTs = 0; }catch(_){}
+    try{ overlayLastDetectTs = 0; }catch(_){}
   }
 }
 
-async function loadProject(){
-  if(servoModal.classList.contains('show')){
-    servoModal.classList.remove('show');
-    servoModal.setAttribute('aria-hidden','true');
-    currentBlock=null;
+/* 얼굴 이벤트 코드 → 한글 라벨 */
+function eventLabelFromCode(code){
+  switch(code){
+    case 'F_FRONT': return '정면';
+    case 'F_UP':    return '위';
+    case 'F_DOWN':  return '아래';
+    case 'F_LEFT':  return '왼쪽';
+    case 'F_RIGHT': return '오른쪽';
+    default:        return String(code||'');
+  }
+}
+
+/* 이벤트 실행 + 로그 */
+function triggerEvent(name, conf, source){
+  var label = eventLabelFromCode(name);
+
+  if(!isRunning){
+    log(`⏸ 실행 중이 아니라 이벤트를 실행하지 않습니다. (${label})`);
+    return;
   }
 
+  if(!eventPrograms || !eventPrograms[name]){
+    try{ eventPrograms = buildEventPrograms(); }catch(e){}
+  }
+  var seq = eventPrograms[name];
+  if(!seq || !seq.length){
+    log(`⚠️ 이벤트 ${label} 에 연결된 블록이 없습니다.`);
+    return;
+  }
+
+  if(typeof conf === 'number'){
+    log(`③ 이벤트 ${label} 실행 (${seq.length}개 명령, ${conf.toFixed(1)}%)`);
+  }else{
+    log(`③ 이벤트 ${label} 실행 (${seq.length}개 명령)`);
+  }
+
+  queue.push({list: seq.slice()});
+  var myToken = cancelToken;
+  processQueue(myToken);
+}
+
+/* 테스트 실행(코딩 화면) */
+function startTest(){
+  if(isRunning) return;
+  eventPrograms = buildEventPrograms();
+  cancelToken++;
+  queue = [];
+  isFullscreenRun = false;
+  setRunning(true);
+}
+
+/* 전체화면 인식 실행 */
+let overlayStartedCam = false;
+async function startFullRun(){
+  if(isRunning) return;
+  eventPrograms = buildEventPrograms();
+  cancelToken++;
+  queue = [];
+  isFullscreenRun = true;
+  setRunning(true);
+
+  overlay.classList.add('show');
+  overlay.setAttribute('aria-hidden','false');
   try{
-    let file;
-    if(window.showOpenFilePicker){
-      const [handle] = await window.showOpenFilePicker({
-        types: [{
-          description: 'XROBO Project',
-          accept: { 'application/json': ['.xrobo.json', '.json'] }
-        }],
-        multiple: false
-      });
-      file = await handle.getFile();
-    }else{
-      file = await new Promise((resolve, reject)=>{
-        const inp=document.createElement('input');
-        inp.type='file';
-        inp.accept='.xrobo.json,application/json,text/json';
-        inp.onchange=async (e)=>{
-          const f=e.target.files?.[0];
-          if(f) resolve(f); else reject(new Error('파일이 선택되지 않았습니다.'));
-        };
-        inp.click();
-      });
-    }
+    if(overlay.requestFullscreen) await overlay.requestFullscreen();
+  }catch(e){}
 
-    const txt = await file.text();
-    const data = JSON.parse(txt);
-
-    if(!data || data.format!=='xrobo-ble-v1'){
-      throw new Error('프로젝트 파일 형식이 올바르지 않습니다.');
+  overlayStartedCam = !camOn;
+  if(!camOn){
+    try{ await startCam(); }catch(e){ log('⚠️ 실행 중 카메라 시작 실패: '+e); }
+  }
+  try{
+    const eyesCam = document.getElementById('eyesCam');
+    if(camStream){
+      eyesCam.srcObject = camStream;
+      await eyesCam.play();
     }
+  }catch(e){}
+  startOverlayEyes();
+}
 
-    // 초기화
-    ws.clear();
-    multiServoConfigs.clear();
+/* 정지 */
+async function stopRun(){
+  cancelToken++;
+  queue=[];
+  setRunning(false);
+  stopOverlayEyes();
+  overlay.classList.remove('show');
+  overlay.setAttribute('aria-hidden','true');
+  isFullscreenRun = false;
+  try{
+    if(document.fullscreenElement) await document.exitFullscreen();
+  }catch(e){}
+  try{
+    if(writeChar) writeChar.writeValue(enc('S\n'));
+  }catch(e){}
+  if(overlayStartedCam){
+    stopCam();
+    overlayStartedCam=false;
+  }
+}
 
-    // 1) XML 우선 로드
-    let loaded = false;
-    if (data.workspaceXml && typeof data.workspaceXml === 'string'){
-      try{
-        const dom = textToDomCompat(data.workspaceXml);
-        domToWorkspaceCompat(dom, ws);
-        loaded = true;
-      }catch(e){
-        console.warn('XML 로드 실패, JSON으로 폴백 시도:', e);
-      }
-    }
-    // 2) JSON 백업 로드
-    if(!loaded && data.workspaceJson){
-      if(!workspaceLoadJsonCompat(data.workspaceJson, ws)){
-        throw new Error('이 Blockly 빌드는 JSON 로더를 지원하지 않습니다.');
-      }
-      loaded = true;
-    }
-    if(!loaded){
-      throw new Error('워크스페이스를 복원할 수 없습니다.');
-    }
+/* 버튼 바인딩 */
+btnTest.onclick = ()=> { if(!isRunning) startTest(); };
+btnRun.onclick  = ()=> { if(!isRunning) startFullRun(); else stopRun(); };
 
-    // 멀티 서보 설정 복원
-    if(Array.isArray(data.multiServoConfigs)){
-      for(const [id, cfg] of data.multiServoConfigs){
-        multiServoConfigs.set(id, cfg);
-      }
-    }else if (data.multiServoConfigs && typeof data.multiServoConfigs==='object'){
-      for(const [id, cfg] of Object.entries(data.multiServoConfigs)){
-        multiServoConfigs.set(id, cfg);
-      }
-    }
+/* 전체화면 해제 시 자동 정지 */
+document.addEventListener('fullscreenchange', ()=>{
+  if (isFullscreenRun && !document.fullscreenElement){
+    stopRun();
+  }
+});
+document.addEventListener('keydown', (e)=>{
+  if (isFullscreenRun && e.key === 'Escape') stopRun();
+});
 
-    // COUNT 라벨 동기화
-    ws.getAllBlocks(false).forEach(b=>{
-      if(b.type==='multi_servo'){
-        const n=(multiServoConfigs.get(b.id)?.units?.length)||0;
-        b.setFieldValue(String(n), 'COUNT');
-      }
+/* ================= 카메라(패널) ================= */
+const camWrap   = document.getElementById('camWrap');
+const camVideo  = document.getElementById('camVideo');
+const camToggle = document.getElementById('camToggle');
+const camBadge  = document.getElementById('camBadge');
+const focusBox  = document.getElementById('focusBox');
+const digitReadout = document.getElementById('digitReadout');
+const digitValEl = digitReadout.querySelector('.value');
+const faceDistHintEl = document.getElementById('faceDistHint');
+
+/* 공용 파라미터 */
+const LOW_W = 64, LOW_H = 48;
+
+/* 캔버스 파라미터 */
+const OCR_W = 240, OCR_H = 240;
+/* ★ 0.5초 간격(요청) ★ */
+const DETECT_PERIOD_MS = 500;
+/* 이벤트 실행 최소 신뢰도(%) */
+const EVENT_CONF_MIN = 50;
+/* (원본 상수 유지) */
+const BG_MIN_MEAN = 90;
+const GRAY_MIN_RATIO = 0.75;
+const COLOR_TOLERANCE = 24;
+
+/* ★ 얼굴 거리 판정(픽셀 기준: 필요시 조절) ★ */
+const FACE_FAR_EYE_DIST  = 55;   // 이 값보다 작으면 멀리 있음
+const FACE_NEAR_EYE_DIST = 120;  // 이 값보다 크면 가까이 있음
+
+/* ★ 얼굴 방향 판정(필요시 조절) ★ */
+const YAW_TH = 0.26;        // 좌/우 민감도(0~1)
+const PITCH_Z_TH = 0.03;    // 위/아래 민감도(z 차이)
+const PITCH_Z_SCALE = 0.09; // z 정규화 스케일
+
+let camStream = null, camOn = false, camRAF = null;
+
+const procCvs = document.createElement('canvas');
+const procCtx = procCvs.getContext('2d', { willReadFrequently:true });
+procCvs.width = LOW_W;
+procCvs.height = LOW_H;
+
+const ocrCvs = document.createElement('canvas');
+const ocrCtx = ocrCvs.getContext('2d', { willReadFrequently:true });
+ocrCvs.width = OCR_W;
+ocrCvs.height = OCR_H;
+
+/* 간단 회색 변환(원본 유지) */
+function toGray(r,g,b){ return (r*0.299 + g*0.587 + b*0.114)|0; }
+
+/* UI */
+function setCamBadge(t){ camBadge.textContent = 'Cam: ' + t; }
+function updateCamUi(){
+  setCamBadge(camOn ? 'on' : 'off');
+  camToggle.textContent = camOn ? '캠 끄기' : '캠 켜기';
+}
+function updateDigitReadout(v){
+  digitValEl.textContent = (v==null ? '—' : String(v));
+}
+function updateFaceDistHint(v){
+  if(faceDistHintEl) faceDistHintEl.textContent = (v==null ? '—' : String(v));
+}
+
+/* 카메라 on/off */
+async function startCam(){
+  if(camOn) return;
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode:{ideal:'user'},
+        width:{ideal:320},
+        height:{ideal:240},
+        frameRate:{ideal:30,max:30}
+      },
+      audio: false
+    });
+    camStream = stream;
+    camVideo.srcObject = stream;
+    await camVideo.play();
+    camOn = true;
+    updateCamUi();
+    updateDigitReadout(null);
+    updateFaceDistHint('—');
+    await ensureOcr(); /* 함수명 유지 */
+    startDetectLoop();
+    log('🎥 카메라 켜짐');
+  }catch(e){
+    log('❌ 카메라 실패: '+e);
+  }
+}
+function stopCam(){
+  if(!camOn) return;
+  try{ camVideo.pause(); }catch(_){}
+  if(camVideo.srcObject){
+    try{ camVideo.srcObject.getTracks().forEach(t=>t.stop()); }catch(_){}
+    camVideo.srcObject = null;
+  }
+  camStream = null;
+  camOn=false;
+  updateCamUi();
+  if(camRAF){ cancelAnimationFrame(camRAF); camRAF=null; }
+  updateDigitReadout(null);
+  updateFaceDistHint('—');
+  if(focusBox){
+    focusBox.style.left='50%';
+    focusBox.style.top='50%';
+    focusBox.style.opacity='.15';
+  }
+  log('🛑 카메라 꺼짐');
+}
+camToggle.onclick = ()=> camOn ? stopCam() : startCam();
+
+/* ===== 얼굴 방향 인식 준비(함수/변수명은 원본 흐름 유지) ===== */
+let ocrWorker = null;   // FaceMesh 인스턴스 저장
+let ocrReady = false;
+let ocrBusy = false;
+let faceLastResults = null;
+
+async function ensureOcr(){
+  if(ocrReady) return;
+  try{
+    if(typeof FaceMesh !== 'function'){
+      throw new Error('MediaPipe FaceMesh가 로드되지 않았습니다.');
+    }
+    const faceMesh = new FaceMesh({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
 
-    // UI 상태 복원(실시간 토글)
-    if(data.ui && typeof data.ui.realTime === 'boolean'){
-      setRealtime(data.ui.realTime);
-    }
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
 
-    refreshCodeDebounced();
-    log('📥 불러오기 완료');
-  }catch(err){
-    console.error(err);
-    alert('불러오기 실패: '+(err?.message||err));
+    faceMesh.onResults((res)=>{ faceLastResults = res; });
+    ocrWorker = faceMesh;
+    ocrReady = true;
+    log('🙂 얼굴 인식 준비 완료');
+  }catch(e){
+    log('❌ 얼굴 인식 초기화 실패: '+e);
   }
 }
 
-$('saveBtn').addEventListener('click', saveProject);
-$('loadBtn').addEventListener('click', loadProject);
+/* ROI 좌표(화면 중앙) */
+function getRoiRectFromFocus(video, fracW=0.7, fracH=0.7){
+  const vw = Math.max(1, video.videoWidth || 320);
+  const vh = Math.max(1, video.videoHeight|| 240);
+  const rw = Math.round(vw * fracW);
+  const rh = Math.round(vh * fracH);
+  const x0 = Math.max(0, Math.floor((vw - rw)/2));
+  const y0 = Math.max(0, Math.floor((vh - rh)/2));
+  return { x:x0, y:y0, w:rw, h:rh, vw, vh };
+}
 
-/* ================= 끝 ================= */
+/* ROI 이미지 대비/감마 보정(원본 함수 흐름 유지) */
+function enhanceCanvasForHands(mode){
+  try{
+    const img = ocrCtx.getImageData(0,0, OCR_W, OCR_H);
+    const d = img.data;
+    const hist = new Uint32Array(256);
+
+    for(let i=0;i<d.length;i+=4){
+      const y = (d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114) | 0;
+      hist[y]++;
+    }
+
+    const total = OCR_W * OCR_H;
+    const lowCount  = Math.max(1, Math.floor(total * 0.01));
+    const highCount = Math.max(1, Math.floor(total * 0.99));
+
+    let cum=0, low=0, high=255;
+    for(let i=0;i<256;i++){
+      cum += hist[i];
+      if(cum >= lowCount){ low=i; break; }
+    }
+    cum=0;
+    for(let i=0;i<256;i++){
+      cum += hist[i];
+      if(cum >= highCount){ high=i; break; }
+    }
+    if(high <= low + 8){ low=0; high=255; }
+
+    const scale = 255 / Math.max(1, (high - low));
+    const gamma = (mode===2 ? 0.78 : 0.88);
+
+    for(let i=0;i<d.length;i+=4){
+      const r=d[i], g=d[i+1], b=d[i+2];
+      const y = (r*0.299 + g*0.587 + b*0.114);
+      let ny = (y - low) * scale;
+      if(ny<0) ny=0; else if(ny>255) ny=255;
+
+      ny = 255 * Math.pow(ny/255, gamma);
+
+      let ratio = (y>0.0001) ? (ny / y) : 0;
+      if(ratio > 3.0) ratio = 3.0;
+
+      d[i]   = Math.max(0, Math.min(255, r*ratio));
+      d[i+1] = Math.max(0, Math.min(255, g*ratio));
+      d[i+2] = Math.max(0, Math.min(255, b*ratio));
+      d[i+3] = 255;
+    }
+
+    ocrCtx.putImageData(img,0,0);
+  }catch(_e){}
+}
+
+/* ROI 전처리 */
+function preprocessToOcrCanvas(video, rect, enhanceMode){
+  ocrCtx.drawImage(video, rect.x, rect.y, rect.w, rect.h, 0, 0, OCR_W, OCR_H);
+  if(enhanceMode === 1 || enhanceMode === 2){
+    enhanceCanvasForHands(enhanceMode);
+  }
+  return {};
+}
+
+/* ================= 얼굴 방향 분류 ================= */
+/* 표시가 좌우 반전(scaleX(-1))이므로, 판정도 화면 기준으로 맞추기 위해 x를 미러링해서 사용 */
+function lmMirrored(lm){
+  return { x: 1 - (lm.x||0), y: (lm.y||0), z: (lm.z||0) };
+}
+function lmSafe(lms, idx){
+  const p = lms && lms[idx];
+  if(!p) return null;
+  return lmMirrored(p);
+}
+function pxDist(a,b,vw,vh){
+  const dx = (a.x-b.x)*vw;
+  const dy = (a.y-b.y)*vh;
+  return Math.hypot(dx,dy);
+}
+function faceDistanceInfo(lms, vw, vh){
+  const le = lmSafe(lms, 33);
+  const re = lmSafe(lms, 263);
+  if(!le || !re){
+    return {cat:'UNKNOWN', text:'인식 가능 거리', eyeDist:0};
+  }
+  const d = pxDist(le,re,vw,vh);
+  if(d < FACE_FAR_EYE_DIST)  return {cat:'FAR',  text:'멀리 있음',       eyeDist:d};
+  if(d > FACE_NEAR_EYE_DIST) return {cat:'NEAR', text:'가까이 있음',     eyeDist:d};
+  return {cat:'OK', text:'인식 가능 거리', eyeDist:d};
+}
+function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+
+function classifyFaceDirectionFromLandmarks(lms, vw, vh){
+  const nose = lmSafe(lms, 1) || lmSafe(lms, 4) || lmSafe(lms, 5) || lmSafe(lms, 195);
+  const lc   = lmSafe(lms, 234);
+  const rc   = lmSafe(lms, 454);
+  const fh   = lmSafe(lms, 10);
+  const ch   = lmSafe(lms, 152);
+
+  if(!nose || !lc || !rc || !fh || !ch) return null;
+
+  // yaw: 코가 양 볼 사이에서 얼마나 치우쳤는지 (화면 기준)
+  const denom = (rc.x - lc.x);
+  let yaw = 0; // -1..1 (음수: 왼쪽, 양수: 오른쪽)
+  if(Math.abs(denom) > 1e-4){
+    const pos = (nose.x - lc.x) / denom;   // 0..1
+    yaw = (pos - 0.5) * 2;                // -1..1
+    yaw = Math.max(-1, Math.min(1, yaw));
+  }
+  const yawStrength = Math.abs(yaw);
+
+  // pitch: 턱/이마 z 차이로 위/아래 추정 (MediaPipe z는 상대값)
+  const dz = (ch.z - fh.z);
+  const pitchStrength = clamp01(Math.abs(dz) / Math.max(1e-6, PITCH_Z_SCALE));
+
+  // 결정(5가지): 정면/위/아래/왼쪽/오른쪽
+  let code='F_FRONT', label='정면';
+  let strength = clamp01(1 - Math.max(yawStrength, pitchStrength));
+
+  const pitchThNorm = clamp01(PITCH_Z_TH / Math.max(1e-6, PITCH_Z_SCALE));
+
+  if(yawStrength >= YAW_TH || pitchStrength >= pitchThNorm){
+    if(yawStrength >= pitchStrength){
+      if(yaw < -YAW_TH){ code='F_LEFT';  label='왼쪽';  strength = clamp01(yawStrength); }
+      else if(yaw >  YAW_TH){ code='F_RIGHT'; label='오른쪽'; strength = clamp01(yawStrength); }
+      else { code='F_FRONT'; label='정면'; strength = clamp01(1 - Math.max(yawStrength, pitchStrength)); }
+    }else{
+      if(dz < -PITCH_Z_TH){ code='F_UP';   label='위';   strength = clamp01(pitchStrength); }
+      else if(dz > PITCH_Z_TH){ code='F_DOWN'; label='아래'; strength = clamp01(pitchStrength); }
+      else { code='F_FRONT'; label='정면'; strength = clamp01(1 - Math.max(yawStrength, pitchStrength)); }
+    }
+  }
+
+  const dist = faceDistanceInfo(lms, vw, vh);
+  const sizeScore = (dist.cat==='OK') ? 1 : (dist.cat==='UNKNOWN' ? 0.75 : 0.6);
+
+  // conf: 방향 강도 + 거리(가까움/멀어짐)에 대한 가중치
+  const conf = clamp01(0.75*strength + 0.25*sizeScore) * 100;
+
+  return {
+    code, label,
+    conf,
+    distanceText: dist.text,
+    distanceCat: dist.cat,
+    eyeDist: dist.eyeDist,
+    _yaw: yaw,
+    _dz: dz
+  };
+}
+
+/* 얼굴 인식 한 번 수행 (함수명 runOcrOnVideo 유지) */
+async function runOcrOnVideo(video, fullFrame=false){
+  if(!ocrReady) return {status:'not-ready', distanceText:'—'};
+  if(!video || !video.videoWidth || !video.videoHeight) return {status:'no-frame', distanceText:'—'};
+  if(ocrBusy) return {status:'busy', distanceText:'—'};
+
+  const rect = fullFrame
+    ? {x:0,y:0,w:Math.max(1,video.videoWidth||320),h:Math.max(1,video.videoHeight||240)}
+    : getRoiRectFromFocus(video);
+
+  ocrBusy = true;
+  try{
+    // 1) 원본 ROI로 시도
+    preprocessToOcrCanvas(video, rect, 0);
+    faceLastResults = null;
+    await ocrWorker.send({ image: ocrCvs });
+    let r = faceLastResults;
+
+    // 2) 얼굴이 안 잡히면 → 약한 보정
+    if(!r || !r.multiFaceLandmarks || !r.multiFaceLandmarks.length){
+      preprocessToOcrCanvas(video, rect, 1);
+      faceLastResults = null;
+      await ocrWorker.send({ image: ocrCvs });
+      r = faceLastResults;
+    }
+
+    // 3) 그래도 안 잡히면 → 강한 보정
+    if(!r || !r.multiFaceLandmarks || !r.multiFaceLandmarks.length){
+      preprocessToOcrCanvas(video, rect, 2);
+      faceLastResults = null;
+      await ocrWorker.send({ image: ocrCvs });
+      r = faceLastResults;
+    }
+
+    ocrBusy = false;
+
+    if(!r || !r.multiFaceLandmarks || !r.multiFaceLandmarks.length){
+      return {status:'no-face', distanceText:'얼굴 없음'};
+    }
+
+    const lms = r.multiFaceLandmarks[0];
+    const g = classifyFaceDirectionFromLandmarks(lms, video.videoWidth, video.videoHeight);
+    if(!g){
+      return {status:'no-face', distanceText:'얼굴 없음'};
+    }
+
+    return {
+      status:'ok',
+      digit: g.label,          // UI 표시 값
+      conf: g.conf,            // %
+      gesture: g.code,         // 이벤트 키
+      distanceText: g.distanceText
+    };
+  }catch(e){
+    ocrBusy = false;
+    return {status:'error', error:e, distanceText:'—'};
+  }
+}
+
+/* 인식 실패 사유 */
+function describeNoDigitReason(res){
+  if(!res || typeof res.status!=='string') return '인식 실패';
+  switch(res.status){
+    case 'no-face': return '얼굴이 보이지 않음';
+    case 'no-frame': return '카메라 프레임 없음';
+    case 'not-ready': return '얼굴 인식 준비중';
+    case 'busy': return '이전 인식 처리중';
+    case 'error': return '얼굴 인식 오류';
+    default: return '인식 실패';
+  }
+}
+
+/* ================= 인식 파이프라인 ================= */
+let panelLastDetectTs = 0;
+let overlayLastDetectTs = 0;
+
+/* 로그 과도 방지(방향이 바뀌거나 1.5초마다만 기록) */
+let lastStateKey = null;   // "gesture" 또는 "NONE"
+let lastLogTs = 0;
+
+function handleDigitPipeline(res, source){
+  const prefix = (source === 'overlay') ? '[전체화면]' : '[카메라]';
+
+  if(!res || res.status==='busy' || res.status==='not-ready' || res.status==='no-frame'){
+    return;
+  }
+
+  // 거리 표시(요청: 상단 작은 글씨)
+  const distText = (res && res.distanceText) ? res.distanceText : (res.status==='no-face' ? '얼굴 없음' : '—');
+  if(source === 'panel'){
+    updateFaceDistHint(distText);
+  }else{
+    try{ updateOverlayFaceDistHint(distText); }catch(_){}
+  }
+
+  // 패널/오버레이 표시값 갱신
+  if(source === 'panel'){
+    if(res.status==='ok' && res.digit!=null) updateDigitReadout(res.digit);
+    else updateDigitReadout(null);
+  }
+
+  // currentKey
+  let currentKey = (res.status === 'ok' && res.gesture) ? String(res.gesture) : 'NONE';
+  const now = performance.now();
+  const shouldLog = (currentKey !== lastStateKey) || (now - lastLogTs > 1500);
+
+  if(shouldLog){
+    lastStateKey = currentKey;
+    lastLogTs = now;
+
+    if(currentKey === 'NONE'){
+      const reason = describeNoDigitReason(res);
+      log(`${prefix} ① 얼굴방향 인식: 없음 (${reason})`);
+      return;
+    }
+
+    const label = (res.digit != null ? String(res.digit) : eventLabelFromCode(res.gesture));
+    const conf  = typeof res.conf === 'number' ? res.conf : 0;
+
+    log(`${prefix} ① 얼굴방향 인식: ${label} (${conf.toFixed(1)}%)`);
+    log(`${prefix}    거리: ${distText}`);
+    log(`${prefix} ② 이벤트 확인중: ${label}`);
+  }
+
+  // 인식 성공이 아니면 종료
+  if(res.status !== 'ok' || !res.gesture){
+    return;
+  }
+
+  const conf  = typeof res.conf === 'number' ? res.conf : 0;
+
+  if(conf < EVENT_CONF_MIN){
+    if(shouldLog){
+      log(`${prefix} ⚠️ 신뢰도 ${conf.toFixed(1)}% 로 ${EVENT_CONF_MIN}% 미만이라 이벤트를 실행하지 않습니다.`);
+    }
+    return;
+  }
+
+  // ★ 이벤트 실행 중에는 인식/트리거 중지 (요청) ★
+  if(queueBusy) return;
+
+  // ★ 0.5초 단위로 계속 인식 → 이벤트 실행 (같은 방향도 반복 실행 가능) ★
+  triggerEvent(String(res.gesture), conf, source);
+}
+
+/* 패널 감지 루프 */
+function startDetectLoop(){
+  panelLastDetectTs = 0;
+  if(focusBox){
+    focusBox.style.left='50%';
+    focusBox.style.top ='50%';
+    focusBox.style.opacity='.18';
+  }
+
+  const step = async ()=>{
+    if(!camOn || camVideo.readyState < 2){
+      camRAF = requestAnimationFrame(step);
+      return;
+    }
+
+    const allowPanelOcr = !isFullscreenRun;
+
+    // ★ 이벤트 실행 중에는 인식 중지(큐 폭주 방지) ★
+    if(allowPanelOcr && !queueBusy){
+      const now = performance.now();
+      if(now - panelLastDetectTs >= DETECT_PERIOD_MS){
+        panelLastDetectTs = now;
+        const res = await runOcrOnVideo(camVideo, false);
+        handleDigitPipeline(res, 'panel');
+      }
+    }
+
+    camRAF = requestAnimationFrame(step);
+  };
+
+  camRAF = requestAnimationFrame(step);
+}
+
+/* ================= 전체화면 인식 ================= */
+const overlayEl = document.getElementById('playOverlay');
+const overlayDigitBadge = document.getElementById('overlayDigitBadge');
+const overlayDigitVal   = overlayDigitBadge.querySelector('.value');
+const eyesCam = document.getElementById('eyesCam');
+const ovFaceDistHintEl = document.getElementById('ovFaceDistHint');
+
+function updateOverlayFaceDistHint(v){
+  if(ovFaceDistHintEl) ovFaceDistHintEl.textContent = (v==null ? '—' : String(v));
+}
+
+const ovEyes   = [...document.querySelectorAll('#playOverlay .eye')];
+const ovPupils = [...document.querySelectorAll('#playOverlay .pupil')];
+
+let eyesRAF = null;
+let overlayBlinkTimer = null;
+
+let ovCurrent = {x:0, y:0};
+let ovTarget  = {x:0, y:0};
+
+/* 눈꺼풀 깜빡임 */
+function scheduleOverlayBlink(){
+  clearTimeout(overlayBlinkTimer);
+  const t = 2200 + Math.random()*3300;
+  overlayBlinkTimer = setTimeout(()=>{
+    ovEyes.forEach(e=>{
+      e.classList.add('blink');
+      setTimeout(()=> e.classList.remove('blink'),
+        parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--blinkSpeed')) + 40);
+    });
+    scheduleOverlayBlink();
+  }, t);
+}
+
+/* 동공 렌더 */
+function renderPupils(nx, ny){
+  ovEyes.forEach((eye, i) => {
+    const rect = eye.getBoundingClientRect();
+    const rEye = Math.min(rect.width, rect.height)/2;
+    const limit = rEye * 0.32;
+    let dx = nx * limit, dy = ny * limit;
+    const dist = Math.hypot(dx,dy);
+    if (dist>limit){
+      const r = limit/dist;
+      dx*=r; dy*=r;
+    }
+    ovPupils[i].style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+  });
+}
+
+/* 배지 갱신 */
+function overlayShowDigit(d){
+  if(!overlayDigitBadge) return;
+  overlayDigitVal.textContent = (d==null || d==='') ? '—' : String(d);
+  overlayDigitBadge.style.display = 'inline-flex';
+}
+
+/* 터치/드래그로 시선 이동 */
+let overlayPointerIdleTimer = null;
+function setOverlayTarget(nx,ny){
+  ovTarget.x = Math.max(-1, Math.min(1,nx));
+  ovTarget.y = Math.max(-1, Math.min(1,ny));
+}
+function handleOverlayPointer(e){
+  const pt = ('touches' in e && e.touches[0]) ? e.touches[0] : e;
+  const cx = innerWidth/2, cy = innerHeight/2;
+  const dx = pt.clientX - cx, dy = pt.clientY - cy;
+  const d = Math.hypot(innerWidth, innerHeight) || 1;
+  setOverlayTarget(dx/(d*0.25), dy/(d*0.25));
+  clearTimeout(overlayPointerIdleTimer);
+  overlayPointerIdleTimer = setTimeout(()=> { setOverlayTarget(0,0); }, 900);
+}
+
+/* 더블 탭/클릭 종료 */
+let lastTap=0;
+function onOverlayPointerDown(e){
+  const now = e.timeStamp || Date.now();
+  if (now - lastTap <= 300){
+    stopRun();
+    lastTap = 0;
+  }else{
+    lastTap = now;
+  }
+}
+function onOverlayDblClick(){ stopRun(); }
+
+/* 오버레이 루프 */
+async function startOverlayEyes(){
+  if(eyesRAF){ cancelAnimationFrame(eyesRAF); eyesRAF = null; }
+  overlayShowDigit(null);
+  updateOverlayFaceDistHint('—');
+  overlayLastDetectTs = 0;
+
+  try{
+    if(camStream){
+      eyesCam.srcObject = camStream;
+      const p = eyesCam.play();
+      if(p && typeof p.then==='function') await p;
+    }
+  }catch(e){}
+
+  scheduleOverlayBlink();
+  overlayEl.addEventListener('pointermove', handleOverlayPointer);
+  overlayEl.addEventListener('pointerdown', handleOverlayPointer);
+  overlayEl.addEventListener('pointerdown', onOverlayPointerDown);
+  overlayEl.addEventListener('dblclick', onOverlayDblClick);
+
+  const loop = async ()=>{
+    if(!isRunning || !isFullscreenRun){
+      eyesRAF = requestAnimationFrame(loop);
+      return;
+    }
+    if(!eyesCam || eyesCam.readyState < 2){
+      eyesRAF = requestAnimationFrame(loop);
+      return;
+    }
+
+    // ★ 이벤트 실행 중에는 인식 중지(요청) ★
+    if(!queueBusy){
+      const now = performance.now();
+      if(now - overlayLastDetectTs >= DETECT_PERIOD_MS){
+        overlayLastDetectTs = now;
+        const res = await runOcrOnVideo(eyesCam, false);
+        handleDigitPipeline(res, 'overlay');
+
+        if(res && res.status==='ok' && res.digit!=null){
+          overlayShowDigit(res.digit);
+        }else{
+          overlayShowDigit(null);
+        }
+      }
+    }
+
+    ovCurrent.x += (ovTarget.x - ovCurrent.x) * 0.08;
+    ovCurrent.y += (ovTarget.y - ovCurrent.y) * 0.08;
+    renderPupils(ovCurrent.x, ovCurrent.y);
+
+    eyesRAF = requestAnimationFrame(loop);
+  };
+  eyesRAF = requestAnimationFrame(loop);
+}
+
+function stopOverlayEyes(){
+  if(eyesRAF){ cancelAnimationFrame(eyesRAF); eyesRAF=null; }
+  overlayShowDigit(null);
+  updateOverlayFaceDistHint('—');
+  clearTimeout(overlayBlinkTimer);
+  overlayEl.removeEventListener('pointermove', handleOverlayPointer);
+  overlayEl.removeEventListener('pointerdown', handleOverlayPointer);
+  overlayEl.removeEventListener('pointerdown', onOverlayPointerDown);
+  overlayEl.removeEventListener('dblclick', onOverlayDblClick);
+}
+
+/* ================= 끝: 메인 스크립트 ================= */
+</script>
+
+<!-- 좌우 슬라이더 / 파일 메뉴 -->
+<script id="xrobo-hsplit-script">
+(function(){
+  var res = document.getElementById('hResizer');
+  var main = document.getElementById('main');
+  var right = document.getElementById('right');
+  if(!res || !main || !right) return;
+
+  var dragging = false;
+  var startX = 0;
+  var startW = 0;
+  var rafId = 0;
+  var maxW = 0;
+
+  function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+  function computeMax(){
+    var rect = main.getBoundingClientRect();
+    var barW = res.getBoundingClientRect().width || 8;
+    maxW = Math.max(0, rect.width - barW);
+    return maxW;
+  }
+
+  function onDown(clientX){
+    dragging = true;
+    startX = clientX;
+    startW = right.getBoundingClientRect().width;
+    computeMax();
+    document.body.classList.add('hs-resizing');
+  }
+
+  function applyWidth(newW){
+    newW = clamp(newW, 0, maxW);
+    document.documentElement.style.setProperty('--rightW', newW + 'px');
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(function(){
+      try{
+        if (window.Blockly && typeof Blockly.svgResize==='function' && window.ws){
+          Blockly.svgResize(ws);
+        }
+      }catch(e){}
+    });
+  }
+
+  function onMove(clientX){
+    if(!dragging) return;
+    var dx = clientX - startX;
+    var newW = startW - dx;
+    applyWidth(newW);
+  }
+
+  function onUp(){
+    dragging = false;
+    document.body.classList.remove('hs-resizing');
+  }
+
+  res.addEventListener('mousedown', function(e){
+    e.preventDefault();
+    onDown(e.clientX);
+  });
+  window.addEventListener('mousemove', function(e){ onMove(e.clientX); });
+  window.addEventListener('mouseup', onUp);
+
+  res.addEventListener('touchstart', function(e){
+    if(!e.touches || !e.touches[0]) return;
+    e.preventDefault();
+    onDown(e.touches[0].clientX);
+  }, {passive:false});
+  window.addEventListener('touchmove', function(e){
+    if(!e.touches || !e.touches[0]) return;
+    onMove(e.touches[0].clientX);
+  }, {passive:false});
+  window.addEventListener('touchend', onUp);
+
+  document.body.classList.remove('panel-collapsed');
+
+  window.addEventListener('resize', function(){
+    var cur = right.getBoundingClientRect().width;
+    var mx = computeMax();
+    if(cur > mx) applyWidth(mx);
+  });
+})();
+
+/* === 파일 드롭다운 로직(저장/불러오기) === */
+(function(){
+  var btn  = document.getElementById('fileBtn');
+  var menu = document.getElementById('fileMenu');
+  if(!btn || !menu) return;
+  btn.addEventListener('click', function(e){
+    e.stopPropagation();
+    menu.classList.toggle('show');
+    menu.setAttribute('aria-hidden', menu.classList.contains('show') ? 'false' : 'true');
+  });
+  document.addEventListener('click', function(){
+    menu.classList.remove('show');
+    menu.setAttribute('aria-hidden','true');
+  });
+  menu.addEventListener('click', function(e){
+    var t = e.target;
+    if(!t || !t.getAttribute) return;
+    var cmd = t.getAttribute('data-cmd');
+    if(!cmd) return;
+    try{
+      if(cmd==='save'){ if(typeof saveProject==='function') saveProject(); }
+      else if(cmd==='load'){ if(typeof loadProject==='function') loadProject(); }
+    }catch(_){}
+    menu.classList.remove('show');
+    menu.setAttribute('aria-hidden','true');
+  });
+})();
+</script>
+
+<!-- === 새로만들기 전용 안전 바인딩 === -->
+<script>
+(function(){
+  var menu = document.getElementById('fileMenu');
+  if(!menu) return;
+  if(menu.__x_new_bound) return;
+  menu.__x_new_bound = true;
+  menu.addEventListener('click', function(e){
+    try{
+      var cmd = e && e.target && e.target.getAttribute && e.target.getAttribute('data-cmd');
+      if(cmd !== 'new') return;
+      if (typeof ws !== 'undefined' && ws && typeof ws.clear === 'function'){
+        if(confirm('현재 프로젝트를 모두 지우고 새로 만들까요?')){
+          try{ ws.clear(); }catch(_){}
+          try{
+            if(typeof multiServoConfigs !== 'undefined' &&
+               multiServoConfigs &&
+               typeof multiServoConfigs.clear==='function'){
+              multiServoConfigs.clear();
+            }
+          }catch(_){}
+          try{ if(typeof refreshCodeDebounced === 'function') refreshCodeDebounced(); }catch(_){}
+          try{ if(typeof log === 'function') log('🆕 새 프로젝트'); }catch(_){}
+        }
+      }else{
+        if(confirm('페이지를 새로고침하여 새로 시작할까요?')){
+          location.reload();
+        }
+      }
+    }catch(_){}
+  });
+})();
+</script>
+
+<!-- 안드로이드 숫자 키패드 (원본 유지) -->
+<script id="xrobo-kp4x4-v14-script">
+(function(){
+  if(!/Android/i.test(navigator.userAgent||'')) { return; }
+
+  'use strict';
+  const isAndroid = /Android/i.test(navigator.userAgent||'');
+  if(!isAndroid){ return; }
+  const hasPointer = 'PointerEvent' in window;
+
+  let pad, disp, grid;
+  let activeInput = null;
+  let activeField = null;
+  let promptCallback = null;
+  let buffer = '';
+  let rafId = 0;
+  let lastAnchor = {x: window.innerWidth/2, y: 140};
+  let outsideBound = false;
+  let committing = false;
+
+  let lastPressLabel = '';
+  let lastPressTime = 0;
+  const PRESS_DEBOUNCE_MS = 160;
+
+  function safeEval(expr){
+    if(typeof expr!=='string') return NaN;
+    expr = expr.replace(/[^0-9+\-*/\s]/g,'').trim();
+    if(!expr) return NaN;
+    const tokens = expr.match(/(\d+|[+\-*/])/g) || [];
+    if(tokens.length===0) return NaN;
+    const values=[], ops=[]; let expectNum=true, unary=null;
+    function prec(op){ return (op==='*'||op==='/')?2:1; }
+    function apply(){
+      const op=ops.pop(), b=values.pop(), a=values.pop();
+      values.push(op==='+'?a+b: op==='-'?a-b: op==='*'?a*b: (b===0?0:Math.trunc(a/b)));
+    }
+    for(const tk of tokens){
+      if(/^\d+$/.test(tk)){
+        let v=parseInt(tk,10);
+        if(unary==='-') v=-v;
+        unary=null;
+        values.push(v);
+        expectNum=false;
+      }else{
+        if(expectNum){
+          if(tk==='+'||tk==='-') unary=tk;
+        }else{
+          while(ops.length && prec(ops[ops.length-1])>=prec(tk)) apply();
+          ops.push(tk);
+          expectNum=true;
+        }
+      }
+    }
+    while(ops.length) apply();
+    return values.length? values[0]:NaN;
+  }
+  function dispatch(el, type){
+    try{ el.dispatchEvent(new Event(type, {bubbles:true})); }catch(_){}
+  }
+
+  function buildPad(){
+    if(pad) return pad;
+    pad = document.createElement('div');
+    pad.id = 'xrobo-kp4x4-v14';
+    pad.innerHTML = '<div class="display" aria-live="polite"></div><div class="grid" role="group" aria-label="숫자패드"></div>';
+    document.body.appendChild(pad);
+    disp = pad.querySelector('.display');
+    grid = pad.querySelector('.grid');
+
+    const layout = [
+      {t:'1'},{t:'2'},{t:'3'},{t:'←',cls:'back'},
+      {t:'4'},{t:'5'},{t:'6'},{t:'C',cls:'clear'},
+      {t:'7'},{t:'8'},{t:'9'},{t:'+',cls:'op'},
+      {t:'*',cls:'op'},{t:'0'},{t:'/',cls:'op'},{t:'-',cls:'op'},
+      {t:'확인',cls:'wide ok'},{t:'취소',cls:'wide cancel'}
+    ];
+    layout.forEach(k=>{
+      const b=document.createElement('button');
+      b.type='button';
+      b.textContent=k.t;
+      if(k.cls) k.cls.split(' ').forEach(c=>b.classList.add(c));
+      grid.appendChild(b);
+    });
+
+    const press = (label)=>{
+      const now = performance.now();
+      if(label === lastPressLabel && (now - lastPressTime) < PRESS_DEBOUNCE_MS){
+        return;
+      }
+      lastPressLabel = label;
+      lastPressTime = now;
+
+      if(label==='확인'){ commit(); return; }
+      if(label==='취소'){ cancel(); return; }
+      if(label==='C'){ buffer=''; sync(); return; }
+      if(label==='←'){ buffer = buffer.slice(0, buffer.length-1); sync(); return; }
+      if(/^[0-9+\-*/]$/.test(label)){ buffer += label; sync(); return; }
+    };
+
+    function getButtonFromEvent(e){
+      if(e.type==='touchstart' && e.touches && e.touches[0]){
+        const t=e.touches[0];
+        const el=document.elementFromPoint(t.clientX, t.clientY);
+        return el && el.closest && el.closest('button');
+      }
+      return e.target && e.target.closest && e.target.closest('button');
+    }
+
+    const onPress = (e)=>{
+      const btn = getButtonFromEvent(e);
+      if(!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      press(btn.textContent);
+    };
+
+    if(!grid.dataset.bound){
+      if(hasPointer){
+        grid.addEventListener('pointerdown', onPress, true);
+      }else if('ontouchstart' in window){
+        grid.addEventListener('touchstart', onPress, {passive:false, capture:true});
+      }else{
+        grid.addEventListener('mousedown', onPress, true);
+      }
+      grid.addEventListener('click', function(e){
+        e.preventDefault();
+        e.stopPropagation();
+      }, true);
+      grid.dataset.bound = '1';
+    }
+
+    const outside = (e)=>{
+      if(!pad.classList.contains('show')) return;
+      if(pad.contains(e.target)) return;
+      if(activeInput && e.target===activeInput) return;
+      commit();
+    };
+    if(!outsideBound){
+      if(hasPointer){
+        document.addEventListener('pointerdown', outside, true);
+      }else if('ontouchstart' in window){
+        document.addEventListener('touchstart', outside, {passive:false, capture:true});
+      }else{
+        document.addEventListener('mousedown', outside, true);
+      }
+      outsideBound = true;
+    }
+
+    return pad;
+  }
+
+  function showPad(){ buildPad().classList.add('show'); }
+  function hidePad(){ if(pad) pad.classList.remove('show'); }
+
+  function positionNearRect(r){
+    const br = pad.getBoundingClientRect();
+    const pw=br.width, ph=br.height;
+    const gap=8, vx=window.scrollX||0, vy=window.scrollY||0;
+    let left=r.right + gap + vx, top=r.top + vy;
+    if(left + pw > vx + innerWidth - 6){
+      left = r.left + vx - pw - gap;
+    }
+    if(top + ph > vy + innerHeight - 6){
+      top = Math.max(vy+6, vy + innerHeight - ph - 6);
+    }
+    if(top < vy + 6) top = vy + 6;
+    pad.style.left = left + 'px';
+    pad.style.top = top + 'px';
+  }
+  function positionNearInput(input){ positionNearRect(input.getBoundingClientRect()); }
+  function positionNearPoint(x,y){ positionNearRect({left:x, right:x, top:y, bottom:y, width:0, height:0}); }
+  function positionNearField(field){
+    try{
+      const root = field && field.getClickTarget_ ? field.getClickTarget_() :
+                   (field && field.getSvgRoot && field.getSvgRoot());
+      if(root && root.getBoundingClientRect){
+        positionNearRect(root.getBoundingClientRect());
+        return true;
+      }
+    }catch(_){}
+    return false;
+  }
+
+  function startFollowInput(input){
+    cancelAnimationFrame(rafId);
+    const tick=()=>{
+      if(activeInput){
+        positionNearInput(input);
+        rafId=requestAnimationFrame(tick);
+      }
+    };
+    tick();
+  }
+  function stopFollow(){
+    cancelAnimationFrame(rafId);
+    rafId=0;
+  }
+
+  function sync(){
+    if(disp) disp.textContent = buffer;
+    if(activeInput){
+      activeInput.value = buffer;
+      dispatch(activeInput,'input');
+    }
+  }
+
+  function evaluateAndClamp(raw, inputEl){
+    let num = safeEval(String(raw||'').trim());
+    if(!Number.isFinite(num)) return { ok:false, val:String(raw||'') };
+    const min = Number(inputEl?.getAttribute('min'));
+    const max = Number(inputEl?.getAttribute('max'));
+    if(Number.isFinite(min)) num = Math.max(min, num);
+    if(Number.isFinite(max)) num = Math.min(max, num);
+    return { ok:true, val:String(num) };
+  }
+
+  function commit(){
+    if(committing) return;
+    committing = true;
+    try{
+      if(activeField && !activeInput){
+        const { ok, val } = evaluateAndClamp(buffer, null);
+        try{ activeField.setValue(ok ? val : buffer); }catch(_){}
+        activeField = null;
+      }else if(activeField && activeInput){
+        const { ok, val } = evaluateAndClamp(buffer, activeInput);
+        try{ activeField.setValue(ok ? val : buffer); }catch(_){}
+        activeField = null;
+      }else if(typeof promptCallback === 'function'){
+        const n = safeEval(buffer);
+        const v = Number.isFinite(n) ? String(n) : buffer;
+        try{ promptCallback(v); }catch(_){}
+        promptCallback = null;
+      }else if(activeInput){
+        const { ok, val } = evaluateAndClamp(buffer, activeInput);
+        activeInput.value = val;
+        dispatch(activeInput,'input');
+        dispatch(activeInput,'change');
+      }
+      try{
+        if(window.Blockly && Blockly.WidgetDiv &&
+           typeof Blockly.WidgetDiv.hide==='function'){
+          Blockly.WidgetDiv.hide();
+        }
+      }catch(_){}
+      activeInput = null;
+      stopFollow();
+      hidePad();
+    }finally{
+      committing = false;
+    }
+  }
+
+  function cancel(){
+    activeField = null;
+    promptCallback = null;
+    activeInput = null;
+    stopFollow();
+    hidePad();
+  }
+
+  function findBlocklyInput(){
+    try{
+      if(window.Blockly){
+        if(Blockly.FieldTextInput && Blockly.FieldTextInput.htmlInput_){
+          return Blockly.FieldTextInput.htmlInput_;
+        }
+        if(Blockly.WidgetDiv && Blockly.WidgetDiv.DIV){
+          const el = Blockly.WidgetDiv.DIV.querySelector('input,textarea');
+          if(el) return el;
+        }
+      }
+      const q = document.querySelector('.blocklyHtmlInput, .blocklyHtmlTextInput, input.blocklyHtmlInput');
+      if(q) return q;
+    }catch(_){}
+    return null;
+  }
+
+  function setupInputPlatform(input){
+    if(isAndroid){
+      input.setAttribute('readonly', 'readonly');
+      input.setAttribute('inputmode','none');
+      input.addEventListener('touchstart', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+      }, {capture:true, passive:false});
+      setTimeout(()=>{ try{ input.blur(); }catch(_){ } }, 0);
+    }else{
+      input.removeAttribute('readonly');
+      input.setAttribute('inputmode','numeric');
+      try{ input.focus(); }catch(_){}
+      input.addEventListener('keydown', function(e){
+        if(e.key==='Enter'){ e.preventDefault(); commit(); }
+        else if(e.key==='Escape'){ e.preventDefault(); cancel(); }
+      }, {once:true, capture:true});
+    }
+    input.setAttribute('pattern','[0-9+\\-*/]*');
+    input.setAttribute('autocomplete','off');
+    input.setAttribute('autocorrect','off');
+    input.setAttribute('autocapitalize','off');
+    input.setAttribute('spellcheck','false');
+  }
+
+  function openForInput(input, field){
+    activeInput = input;
+    activeField = field || null;
+    promptCallback = null;
+    setupInputPlatform(input);
+    buffer = String(input.value||'');
+    showPad();
+    positionNearInput(input);
+    startFollowInput(input);
+    sync();
+  }
+
+  function openForField(field){
+    activeField = field || null;
+    activeInput = null;
+    promptCallback = null;
+    buffer = (field && typeof field.getValue==='function') ? String(field.getValue()||'') : '';
+    showPad();
+    if(!positionNearField(field)){
+      positionNearPoint(lastAnchor.x, lastAnchor.y);
+    }
+    sync();
+  }
+
+  function openForPrompt(defVal, anchor){
+    activeInput = null;
+    activeField = null;
+    buffer = String(defVal||'');
+    showPad();
+    positionNearPoint(anchor.x, anchor.y);
+    sync();
+  }
+
+  function afterEditorOpened(field){
+    let found = false;
+    const adopt = ()=>{
+      const input = findBlocklyInput();
+      if(input){
+        if(!pad || !pad.classList.contains('show')) showPad();
+        openForInput(input, field);
+        found = true;
+        return true;
+      }
+      return false;
+    };
+    if(adopt()) return;
+    openForField(field);
+    let tries = 0;
+    const iv=setInterval(()=>{
+      if(adopt() || ++tries>8) clearInterval(iv);
+    },50);
+  }
+
+  function patchFieldNumber(){
+    try{
+      if(!window.Blockly || !Blockly.FieldNumber || Blockly.FieldNumber.__xrobo_v14) return;
+      function wrap(name){
+        const orig = Blockly.FieldNumber.prototype[name];
+        if(!orig) return false;
+        Blockly.FieldNumber.prototype[name] = function(){
+          const rv = orig.apply(this, arguments);
+          const self = this;
+          setTimeout(()=> afterEditorOpened(self), 0);
+          return rv;
+        };
+        return true;
+      }
+      wrap('showEditor_') || wrap('showEditor');
+      Blockly.FieldNumber.__xrobo_v14 = true;
+    }catch(_){}
+  }
+
+  function patchFieldTextInput(){
+    try{
+      if(!window.Blockly || !Blockly.FieldTextInput || Blockly.FieldTextInput.__xrobo_v14) return;
+      const proto = Blockly.FieldTextInput.prototype;
+      const origShow = proto.showEditor_;
+      proto.showEditor_ = function(opt_e){
+        const rv = origShow ? origShow.apply(this, arguments) : undefined;
+        if((typeof Blockly.FieldNumber!=='undefined') && (this instanceof Blockly.FieldNumber)){
+          const self = this;
+          setTimeout(()=> afterEditorOpened(self), 0);
+        }
+        return rv;
+      };
+      const origPrompt = proto.showPromptEditor_;
+      if(typeof origPrompt === 'function'){
+        proto.showPromptEditor_ = function(){
+          if((typeof Blockly.FieldNumber!=='undefined') && (this instanceof Blockly.FieldNumber)){
+            openForPrompt(this.getValue ? this.getValue() : '', lastAnchor);
+            return;
+          }
+          return origPrompt.apply(this, arguments);
+        };
+      }
+      Blockly.FieldTextInput.__xrobo_v14 = true;
+    }catch(_){}
+  }
+
+  function patchPrompt(){
+    try{
+      if(!window.Blockly) return;
+      const numLike = v => /^[\s]*[+\-]?\d+(?:[\s]*[+\-*/][\s]*[+\-]?\d+)*[\s]*$/.test(String(v||''));
+      if(Blockly.dialog && typeof Blockly.dialog.setPrompt==='function' && !Blockly.dialog.__xrobo_v14){
+        Blockly.dialog.setPrompt(function(msg, defVal, cb){
+          const looksNumeric = numLike(defVal) || /value|값|number|숫자/i.test(String(msg||''));
+          if(looksNumeric){
+            promptCallback = v => { try{ cb(v); }catch(_){ } };
+            openForPrompt(defVal, lastAnchor);
+          }else{
+            const ans = window.prompt(String(msg||''), String(defVal||''));
+            try{ cb(ans); }catch(_){}
+          }
+        });
+        Blockly.dialog.__xrobo_v14 = true;
+      }else if(!Blockly.__xrobo_prompt_v14){
+        const old = Blockly.prompt;
+        Blockly.prompt = function(message, defaultValue, callback){
+          const looksNumeric = numLike(defaultValue) || /value|값|number|숫자/i.test(String(message||''));
+          if(looksNumeric){
+            promptCallback = v=>{ try{ callback(v); }catch(_){ }};
+            openForPrompt(defaultValue, lastAnchor);
+          }else{
+            return old ? old.apply(this, arguments) : window.prompt(message, defaultValue);
+          }
+        };
+        Blockly.__xrobo_prompt_v14 = true;
+      }
+    }catch(_){}
+  }
+
+  document.addEventListener('focusin', function(e){
+    const t = e.target;
+    if(!t) return;
+    if(t.classList && (t.classList.contains('blocklyHtmlInput') ||
+                       t.classList.contains('blocklyHtmlTextInput'))){
+      openForInput(t, null);
+      const onBlur = ()=>{ try{ commit(); }catch(_){ cancel(); } t.removeEventListener('blur', onBlur); };
+      t.addEventListener('blur', onBlur);
+    }else{
+      try{
+        const uaOk = /Android/i.test(navigator.userAgent||'');
+        if(uaOk && t.matches('#servoModal .speedbox input, #boardStage .speedbox input')){
+          try{
+            t.setAttribute('inputmode','none');
+            t.setAttribute('autocomplete','off');
+            t.setAttribute('autocorrect','off');
+          }catch(_){}
+          try{
+            t.setAttribute('readonly','readonly');
+            setTimeout(()=>{ try{ t.removeAttribute('readonly'); }catch(_){ } }, 0);
+          }catch(_){}
+          openForInput(t, null);
+          const onBlur = ()=>{ try{ commit(); }catch(_){ cancel(); } t.removeEventListener('blur', onBlur); };
+          t.addEventListener('blur', onBlur);
+        }
+      }catch(_){}
+    }
+  }, true);
+
+  (function(){
+    if(!/Android/i.test(navigator.userAgent||'')) { return; }
+    const root = document.getElementById('blocklyDiv') || document.body;
+    const savePt = (e)=>{ lastAnchor = {x:e.clientX, y:e.clientY}; };
+    if(hasPointer){
+      root.addEventListener('pointerdown', savePt, true);
+    }else{
+      root.addEventListener('mousedown', savePt, true);
+      root.addEventListener('touchstart', (e)=>{
+        if(e.touches&&e.touches[0]) lastAnchor={x:e.touches[0].clientX, y:e.touches[0].clientY};
+      }, {capture:true, passive:true});
+    }
+  })();
+
+  function tryPatch(){ patchFieldNumber(); patchFieldTextInput(); patchPrompt(); }
+  if(document.readyState==='complete' || document.readyState==='interactive'){
+    tryPatch();
+  }else{
+    window.addEventListener('DOMContentLoaded', tryPatch);
+  }
+  let tries=0;
+  const iv=setInterval(()=>{ tryPatch(); if(++tries>12) clearInterval(iv); }, 300);
+})();
 </script>
 </body>
 </html>

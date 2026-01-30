@@ -1,0 +1,1396 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>XROBO BLE</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<script src="https://unpkg.com/blockly/blockly.min.js"></script>
+<style>
+  :root{
+    --pad:10px;
+    --uiScale: 1;
+    --headerH: 64px;
+    --btnH: 36px;
+    --gap: 8px;
+    --headerBgTop: #fff7ed;
+    --headerBgBottom: #fffbeb;
+    --headerBorder: #fed7aa;
+    --logH: 180px;
+    --blue: #1d4ed8;
+
+    /* 핸들/삼각형 */
+    --handleWBase: 22;
+    --handleHBase: 28;
+    --triWBase:   14;
+    --triHBase:   12;
+
+    /* 계산값 */
+    --handleW: calc(var(--handleWBase) * var(--uiScale) * 1px);
+    --handleH: calc(var(--handleHBase) * var(--uiScale) * 1px);
+    --triW:    calc(var(--triWBase)    * var(--uiScale) * 1px);
+    --triH:    calc(var(--triHBase)    * var(--uiScale) * 1px);
+    --linkBar: calc(3 * var(--uiScale) * 1px);
+  }
+  *{ box-sizing:border-box; }
+  html, body{ height:100%; }
+  body{ margin:0; font-family:system-ui, sans-serif; background:#fff; }
+
+  /* ── 헤더 ───────────────────────────────── */
+  header{
+    padding: 8px 12px;
+    background: linear-gradient(180deg, var(--headerBgTop), var(--headerBgBottom));
+    border-bottom: 1px solid var(--headerBorder);
+    position:relative; z-index:10;
+  }
+  #topbar{
+    display:flex; align-items:center; gap: calc(var(--gap) * var(--uiScale));
+    flex-wrap: wrap;
+  }
+  .title{
+    font-weight: 800; letter-spacing: .2px;
+    color:#7c2d12; margin-right: 12px;
+    font-size: calc(18px * var(--uiScale));
+  }
+  .spacer{ flex: 1 1 auto; }
+
+  .btn{
+    height: calc(var(--btnH) * var(--uiScale));
+    padding: 0 calc(12px * var(--uiScale));
+    border:0; border-radius: calc(10px * var(--uiScale));
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size: calc(14px * var(--uiScale)); font-weight:600;
+    box-shadow:0 2px 8px rgba(0,0,0,.08);
+    background:#f3f4f6; color:#111827; cursor:pointer;
+    user-select:none;
+  }
+  #connectToggle{ background:#2563eb; color:#fff; }
+  #rtToggle.on{ background:#2563eb; color:#fff; } /* 모달 속 실시간 버튼 */
+  #runToggle{ background:#16a34a; color:#fff; }
+  #fsBtn{ background:#111827; color:#fff; }
+
+  .state{
+    display:inline-flex; align-items:center; gap:calc(6px * var(--uiScale));
+    height: calc(var(--btnH) * var(--uiScale));
+    padding: 0 calc(6px * var(--uiScale));
+    font-size: calc(12px * var(--uiScale));
+  }
+  .badgeDot{
+    width: calc(22px * var(--uiScale));
+    height: calc(22px * var(--uiScale));
+    border-radius: 50%;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size: calc(11px * var(--uiScale));
+    font-weight:800; color:#fff;
+    box-shadow: 0 0 0 calc(4px * var(--uiScale)) rgba(0,0,0,.06) inset;
+  }
+  .badgeDot.on{ background:#3b82f6; }
+  .badgeDot.off{ background:#ef4444; }
+
+  /* ── 레이아웃 ─────────────────────────── */
+  #main{
+    display:flex; width:100%;
+    height: calc(100vh - var(--headerH));
+    min-height: 0; /* ← 내부 스크롤 허용 */
+  }
+  #left{
+    position:relative; flex:1 1 auto; min-width:0; height:100%;
+    min-height:0; /* ← 내부 스크롤 허용 */
+    display:flex; overflow:visible;
+  }
+  #blocklyDiv{ flex:1 1 auto; min-width:0; height:100%; width:100%; }
+
+  /* 오른쪽 패널 */
+  #right{
+    flex:0 0 40%; display:flex; flex-direction:column; background:#fff;
+    margin:8px 8px 8px 0; border:1px solid #e5e7eb; border-left:3px solid var(--blue);
+    border-radius:12px 0 0 12px; box-shadow:0 2px 10px rgba(0,0,0,.04);
+    overflow:hidden; position:relative; min-height:0; /* ← 내부 스크롤 허용 */
+  }
+  #rightTop{
+    flex:1 1 auto; min-height:0; /* ← 내부 스크롤 허용 */
+    border-bottom:1px solid #e5e7eb; background:#f5f7fa; color:#111827;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: calc(13px * var(--uiScale)); line-height:1.45;
+    padding: calc(12px * var(--uiScale));
+    overflow:auto; white-space:pre; tab-size:2;
+  }
+/* 실행 로그 패널: 고정 높이 + 내부 스크롤 구조 */
+#rightBottom{
+  flex: 0 0 var(--logH);          /* <- 높이는 변수로 고정 */
+  display: flex;                  /* <- 세로 플렉스 컨테이너로 변경 */
+  flex-direction: column;
+  min-height: 0;                  /* <- 내부 스크롤 허용 */
+  overflow: hidden;               /* <- 자식 넘침 감춤(스크롤은 #log에서 처리) */
+  padding: calc(10px * var(--uiScale));
+  background:#0b0f14; 
+  color:#d1e4ff; 
+  border-top:1px solid #1f2937;
+}
+
+/* 실제 로그 박스: 영역을 채우고, 내용은 스크롤 */
+#log{
+  flex: 1 1 0;                    /* <- 남은 영역을 채움 */
+  min-height: 0;                  /* <- 내부 스크롤에 필수 */
+  overflow: auto;                 /* <- 내용 길어지면 스크롤 생성 */
+  white-space: pre-wrap; 
+  background:#0b0f14;
+  border:1px solid #1f2937; 
+  border-radius: calc(8px * var(--uiScale));
+  padding: calc(10px * var(--uiScale));
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: calc(12px * var(--uiScale)); 
+  color:#d1e4ff;
+}
+
+
+  /* 실행창 토글 핸들 */
+  #panelHandle{
+    position:absolute; top: calc(12px * var(--uiScale)); right: 0;
+    z-index:9999; width: var(--handleW); height: var(--handleH);
+    background: var(--blue); border: 0; border-radius: calc(6px * var(--uiScale));
+    box-shadow: 0 2px 8px rgba(0,0,0,.18);
+    cursor: pointer; padding: 0;
+  }
+  #panelHandle::before{
+    content:''; position:absolute; top:0; right: calc(0px - var(--linkBar));
+    width: var(--linkBar); height:100%; background: var(--blue);
+    border-top-right-radius: calc(6px * var(--uiScale));
+    border-bottom-right-radius: calc(6px * var(--uiScale));
+  }
+  #panelHandle::after{
+    content:''; position:absolute; top:50%; transform: translateY(-50%);
+    width:0; height:0; border-style: solid;
+  }
+  #panelHandle.open::after{
+    left: calc((var(--handleW) - var(--triW)) / 2);
+    border-width: var(--triH) 0 var(--triH) var(--triW);
+    border-color: transparent transparent transparent white;
+  }
+  #panelHandle.closed::after{
+    left: calc((var(--handleW) - var(--triW)) / 2);
+    border-width: var(--triH) var(--triW) var(--triH) 0;
+    border-color: transparent white transparent transparent;
+  }
+  .blocklyZoom,.blocklyTrash{ display:block !important; }
+
+  body.fs-active #main{ height: calc(100vh - var(--headerH)); }
+  body.panel-collapsed #right{ display:none; }
+  body.panel-collapsed #left{ flex:1 1 100%; }
+
+  /* ───────────── 모달(멀티 서보 설정) ───────────── */
+  .modal{ position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+          background:rgba(0,0,0,.45); z-index:10000; }
+  .modal.show{ display:flex; }
+  .modal-card{
+    /* 상하를 조금 더 확대 (이전보다 살짝 키움) */
+    width:min(98vw, 1400px);
+    height:min(98vh, 1040px);
+    background:#fff; border-radius:12px; box-shadow:0 18px 60px rgba(0,0,0,.25);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .modal-head{
+    display:flex; align-items:center; gap:8px; padding:10px;
+    background:#fafafa; border-bottom:1px solid #e5e7eb;
+  }
+  .modal-head .title{ font-size:14px; color:#111827; font-weight:800; }
+  .modal-head .sp{ flex:1 1 auto; }
+  .modal-head .btn{ height:30px; background:#fff; border:1px solid #d1d5db; }
+  .modal-body{ position:relative; flex:1 1 auto; }
+
+  /* 모달 보드(흰 배경) + 유닛(회색 박스) + 검은 다이얼 */
+  .board{
+    position:absolute; inset:0; background:#ffffff; background-size:contain; background-repeat:no-repeat; background-position:center;
+    overflow:auto; /* ← 넘치면 스크롤 */
+  }
+  .unit{
+    position:absolute; width:128px; height:128px;
+    background:#d1d5db; border:1px solid #9ca3af; border-radius:10px;
+    box-shadow:0 2px 8px rgba(0,0,0,.12);
+    user-select:none; touch-action:none;
+  }
+  .unit.dragging{ box-shadow:0 8px 18px rgba(0,0,0,.22); outline:1px dashed #cbd5e1; }
+
+  .handle{
+    position:absolute; inset:0 auto auto 0; height:22px; width:100%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:900; letter-spacing:.3px; color:#111827;
+    background:#e5e7eb; border-bottom:1px solid #d1d5db; border-radius:10px 10px 0 0;
+    cursor:grab; z-index:3;
+  }
+  .handle:active{ cursor:grabbing; }
+  .pwr-top{
+    position:absolute; right:4px; top:50%; transform:translateY(-50%);
+    width:16px; height:16px; border-radius:50%; display:grid; place-items:center;
+    border:1px solid #d1d5db; color:#fff; font-size:9px; font-weight:900;
+    background:#2563eb; cursor:pointer; user-select:none;
+  }
+  .pwr-top.off{ background:#ef4444; }
+
+  .row{ position:absolute; top:26px; left:50%; transform:translateX(-50%); width:calc(128px - 10px); height:24px; display:flex; gap:6px; z-index:2; }
+  .numbox, .speedbox{
+    flex:1 1 0; height:100%; border-radius:7px; background:#ffffff; border:1px solid #d1d5db;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .numbox input{
+    width:calc(100% - 10px); height:18px; border:0; outline:none; background:transparent; color:#111827; text-align:center; font-size:12px;
+  }
+  .speedbox select{
+    width:100%; height:18px; border:0; outline:none; background:transparent; color:#111827; text-align:center; font-size:12px;
+  }
+  .dial-svg{
+    position:absolute; left:50%; top:calc(50% + 20px); transform:translate(-50%,-50%);
+    width:56px; height:56px; z-index:1;
+  }
+  .ring-base{ fill:#0a0a0a; stroke:#111827; stroke-width:2; }
+  .tick{ stroke:#9aa3b2; stroke-width:2; stroke-linecap:round; }
+  .dot{ transition: fill .12s ease, filter .12s ease, r .12s ease, stroke .12s ease; }
+  .dot.blue{ stroke:#1e3a8a; stroke-width:.6; }
+  .dot.red { fill:#ef4444; stroke:#7f1d1d; stroke-width:.6; filter: drop-shadow(0 0 6px rgba(239,68,68,.9)); }
+</style>
+</head>
+<body>
+  <!-- 헤더 -->
+  <header id="appHeader">
+    <div id="topbar">
+      <div class="title">XROBO BLE</div>
+      <div class="spacer"></div>
+
+      <!-- 저장/불러오기 버튼 -->
+      <button id="saveBtn" class="btn" title="프로젝트 저장">저장</button>
+      <button id="loadBtn" class="btn" title="프로젝트 불러오기">불러오기</button>
+
+      <span class="state"><span id="statusDot" class="badgeDot off">off</span></span>
+      <button id="connectToggle" class="btn">연결</button>
+      <button id="runToggle" class="btn" disabled>▶ 실행</button>
+      <button id="fsBtn" class="btn" title="전체화면">전체화면</button>
+    </div>
+  </header>
+
+  <!-- 본문 -->
+  <div id="main">
+    <div id="left">
+      <div id="blocklyDiv"></div>
+      <button id="panelHandle" class="open" title="실행창 닫기"></button>
+    </div>
+
+    <div id="right">
+      <div id="rightTop"></div>
+      <div id="rightBottom">
+        <div style="font-size:calc(12px * var(--uiScale));color:#9ca3af;">실행 로그</div>
+        <div id="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 툴박스 -->
+  <xml id="toolbox" style="display:none">
+    <category name="이벤트" colour="#f59e0b"><block type="xrobo_start"></block></category>
+
+    <category name="입력" colour="#06b6d4">
+      <block type="in_xkeypad"><field name="PIN">IN1</field><field name="BTN">B1</field></block>
+      <block type="in_ir_dist"><field name="PIN">IN1</field>
+        <value name="DIST"><shadow type="math_number"><field name="NUM">10</field></shadow></value></block>
+      <block type="in_touch"><field name="PIN">IN1</field></block>
+    </category>
+
+    <category name="출력" colour="#60a5fa">
+      <block type="motor12_dd"><field name="M1">20</field><field name="M2">20</field><field name="MS">500</field></block>
+      <block type="motor12_in">
+        <value name="M1"><shadow type="math_number"><field name="NUM">20</field></shadow></value>
+        <value name="M2"><shadow type="math_number"><field name="NUM">20</field></shadow></value>
+        <value name="MS"><shadow type="math_number"><field name="NUM">500</field></shadow></value>
+      </block>
+
+      <block type="motor34_dd"><field name="M3">20</field><field name="M4">20</field><field name="MS">500</field></block>
+      <block type="motor34_in">
+        <value name="M3"><shadow type="math_number"><field name="NUM">20</field></shadow></value>
+        <value name="M4"><shadow type="math_number"><field name="NUM">20</field></shadow></value>
+        <value name="MS"><shadow type="math_number"><field name="NUM">500</field></shadow></value>
+      </block>
+
+      <block type="servo_dd"><field name="OUT">OUT1</field><field name="ANG">90</field></block>
+      <block type="servo_in"><field name="OUT">OUT1</field>
+        <value name="ANG"><shadow type="math_number"><field name="NUM">90</field></shadow></value></block>
+      <block type="servo_slow"><field name="OUT">OUT1</field>
+        <value name="DELAY"><shadow type="math_number"><field name="NUM">5</field></shadow></value>
+        <value name="ANG"><shadow type="math_number"><field name="NUM">90</field></shadow></value></block>
+
+      <block type="melody"><field name="PITCH">C4</field>
+        <value name="DUR"><shadow type="math_number"><field name="NUM">200</field></shadow></value>
+        <value name="WAIT"><shadow type="math_number"><field name="NUM">250</field></shadow></value></block>
+
+      <block type="led_ctrl"><field name="TGT">OUT1</field><field name="MODE">BRIGHT</field><field name="VAL">10</field></block>
+
+      <!-- ★ 멀티 서보 블록 -->
+      <block type="multi_servo"></block>
+    </category>
+
+    <category name="제어" colour="#10b981">
+      <block type="repeat_forever"></block>
+      <block type="controls_repeat_ext"><value name="TIMES">
+        <shadow type="math_number"><field name="NUM">3</field></shadow></value></block>
+      <block type="controls_if"></block>
+      <block type="controls_if"><mutation else="1"></mutation></block>
+      <block type="wait_seconds"><value name="SEC">
+        <shadow type="math_number"><field name="NUM">1</field></shadow></value></block>
+      <block type="control_wait_until"></block>
+      <block type="control_repeat_until"></block>
+    </category>
+
+    <category name="연산" colour="#a78bfa">
+      <block type="math_arithmetic">
+        <value name="A"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+        <value name="B"><shadow type="math_number"><field name="NUM">2</field></shadow></value>
+      </block>
+      <block type="logic_compare">
+        <value name="A"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
+        <value name="B"><shadow type="math_number"><field name="NUM">5</field></shadow></value>
+      </block>
+      <block type="logic_operation"></block>
+      <block type="logic_negate"></block>
+      <block type="logic_boolean"></block>
+      <block type="math_random_int">
+        <value name="FROM"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+        <value name="TO"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
+      </block>
+      <block type="math_number"><field name="NUM">20</field></block>
+      <block type="math_number"><field name="NUM">500</field></block>
+    </category>
+
+    <category name="변수" colour="#f97316" custom="VARIABLE"></category>
+    <category name="내블록" colour="#ef4444" custom="PROCEDURE"></category>
+  </xml>
+
+  <!-- ── 멀티 서보 설정 모달 ── -->
+  <div id="servoModal" class="modal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-head">
+        <div id="modalTitle" class="title">멀티 서보 설정</div>
+
+        <div class="sp"></div>
+
+        <!-- 실시간 토글 버튼 (모달 내부) -->
+        <button id="rtToggle" class="btn" title="실시간 전송 토글">실시간: OFF</button>
+
+        <button id="addServoBtn" class="btn">+ 서보 추가</button>
+        <input id="bgUrl" class="btn" style="width:260px;text-align:left" placeholder="배경 이미지 URL (선택)">
+        <button id="applyBg" class="btn">배경 적용</button>
+        <button id="closeModal" class="btn">저장 & 닫기 ✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="board" class="board"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ================= Blockly 기본 설정 ================= */
+class XroboZelosProvider extends Blockly.zelos.ConstantProvider {
+  constructor(){ super(); this.ADD_START_HATS = true; }
+}
+class XroboZelosRenderer extends Blockly.zelos.Renderer {
+  constructor(){ super('xrobo_zelos'); }
+  makeConstants_(){ return new XroboZelosProvider(); }
+}
+Blockly.blockRendering.register('xrobo_zelos', XroboZelosRenderer);
+
+const XroboTheme = Blockly.Theme.defineTheme('xrobo_theme', {
+  base: Blockly.Themes.Zelos, componentStyles: { startHats: true }
+});
+
+const ws = Blockly.inject('blocklyDiv', {
+  toolbox: document.getElementById('toolbox'),
+  renderer: 'xrobo_zelos', theme: XroboTheme,
+  grid: { spacing:20, length:3, colour:'#eee', snap:true },
+  zoom: { controls:true, wheel:true }
+});
+
+/* ================= 블록 정의 ================= */
+const PINS_IN=[["IN1","IN1"],["IN2","IN2"],["IN3","IN3"],["IN4","IN4"]];
+const PINS_OUT=[["OUT1","OUT1"],["OUT2","OUT2"],["OUT3","OUT3"],["OUT4","OUT4"],["OUT5","OUT5"],["OUT6","OUT6"],["OUT7","OUT7"],["OUT8","OUT8"]];
+const KEYS_B=[["B1","B1"],["B2","B2"],["B3","B3"],["B4","B4"],["B5","B5"]];
+const SPEEDS=Array.from({length:41},(_,i)=>20-i).map(v=>[String(v),String(v)]);
+const TIMES100=Array.from({length:10},(_,i)=>(100*(i+1))).map(v=>[String(v),String(v)]);
+const ANG_5=Array.from({length:37},(_,i)=>i*5).map(v=>[String(v),String(v)]);
+const LED_TGT=[...PINS_OUT,["CPU","CPU"]];
+const LED_MODE=[["밝기","BRIGHT"],["숨쉬기","BREATHE"]];
+const LED_VALS=Array.from({length:20},(_,i)=>[String(i),String(i)]);
+const PITCHES=(()=>{const KR=["도","레","미","파","솔","라","시"],EN=["C","D","E","F","G","A","B"],L=[];
+  for(let o=4;o<=6;o++) for(let i=0;i<7;i++) L.push([`${KR[i]}${o}`, `${EN[i]}${o}`]); return L;})();
+
+Blockly.defineBlocksWithJsonArray([
+  { "type":"xrobo_start", "message0":"XROBO start", "nextStatement":null, "colour":36, "hat":"cap" },
+
+  { "type":"in_xkeypad", "message0":"X 키패드 핀 %1 버튼 %2",
+    "args0":[{"type":"field_dropdown","name":"PIN","options":PINS_IN},{"type":"field_dropdown","name":"BTN","options":KEYS_B}],
+    "output":"Boolean","colour":198 },
+
+  { "type":"in_ir_dist", "message0":"적외선센서 핀 %1 거리 %2 이내",
+    "args0":[{"type":"field_dropdown","name":"PIN","options":PINS_IN},{"type":"input_value","name":"DIST","check":"Number"}],
+    "output":"Boolean","colour":198 },
+
+  { "type":"in_touch", "message0":"접촉센서 핀 %1 눌림",
+    "args0":[{"type":"field_dropdown","name":"PIN","options":PINS_IN}],
+    "output":"Boolean","colour":198 },
+
+  { "type":"motor12_dd","message0":"모터 M1 %1  M2 %2  시간 %3 ms",
+    "args0":[{"type":"field_dropdown","name":"M1","options":SPEEDS},{"type":"field_dropdown","name":"M2","options":SPEEDS},{"type":"field_dropdown","name":"MS","options":TIMES100}],
+    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":210 },
+
+  { "type":"motor12_in","message0":"모터 M1 %1  M2 %2  시간 %3 ms",
+    "args0":[{"type":"input_value","name":"M1","check":"Number"},{"type":"input_value","name":"M2","check":"Number"},{"type":"input_value","name":"MS","check":"Number"}],
+    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":210 },
+
+  { "type":"motor34_dd","message0":"모터 M3 %1  M4 %2  시간 %3 ms",
+    "args0":[{"type":"field_dropdown","name":"M3","options":SPEEDS},{"type":"field_dropdown","name":"M4","options":SPEEDS},{"type":"field_dropdown","name":"MS","options":TIMES100}],
+    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":210 },
+
+  { "type":"motor34_in","message0":"모터 M3 %1  M4 %2  시간 %3 ms",
+    "args0":[{"type":"input_value","name":"M3","check":"Number"},{"type":"input_value","name":"M4","check":"Number"},{"type":"input_value","name":"MS","check":"Number"}],
+    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":210 },
+
+  { "type":"servo_dd","message0":"서보모터 %1 각도 %2°",
+    "args0":[{"type":"field_dropdown","name":"OUT","options":PINS_OUT},{"type":"field_dropdown","name":"ANG","options":ANG_5}],
+    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":30 },
+
+  { "type":"servo_in","message0":"서보모터 %1 각도 %2°",
+    "args0":[{"type":"field_dropdown","name":"OUT","options":PINS_OUT},{"type":"input_value","name":"ANG","check":"Number"}],
+    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":30 },
+
+  { "type":"servo_slow","message0":"슬로우 서보 %1 지연 %2 ms 각도 %3°",
+    "args0":[{"type":"field_dropdown","name":"OUT","options":PINS_OUT},{"type":"input_value","name":"DELAY","check":"Number"},{"type":"input_value","name":"ANG","check":"Number"}],
+    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":30 },
+
+  { "type":"melody","message0":"멜로디 음높이 %1 소리시간 %2 ms 대기시간 %3 ms",
+    "args0":[{"type":"field_dropdown","name":"PITCH","options":PITCHES},{"type":"input_value","name":"DUR","check":"Number"},{"type":"input_value","name":"WAIT","check":"Number"}],
+    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":300 },
+
+  { "type":"led_ctrl","message0":"LED %1 모드 %2 값 %3",
+    "args0":[{"type":"field_dropdown","name":"TGT","options":LED_TGT},{"type":"field_dropdown","name":"MODE","options":LED_MODE},{"type":"field_dropdown","name":"VAL","options":LED_VALS}],
+    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":330 },
+
+  { "type":"repeat_forever","message0":"forever %1 %2",
+    "args0":[{"type":"input_statement","name":"DO"},{"type":"input_dummy"}],"previousStatement":null,"nextStatement":null,"colour":120 },
+
+  { "type":"wait_seconds","message0":"%1 초 기다리기",
+    "args0":[{"type":"input_value","name":"SEC","check":"Number"}],
+    "previousStatement":null,"nextStatement":null,"inputsInline":true,"colour":120 },
+
+  { "type":"control_wait_until","message0":"다음까지 기다리기 %1",
+    "args0":[{"type":"input_value","name":"COND","check":"Boolean"}],"previousStatement":null,"nextStatement":null,"colour":120 },
+
+  { "type":"control_repeat_until","message0":"다음까지 반복 %1 %2 %3",
+    "args0":[{"type":"input_value","name":"COND","check":"Boolean"},{"type":"input_statement","name":"DO"},{"type":"input_dummy"}],
+    "previousStatement":null,"nextStatement":null,"colour":120 },
+
+  /* ★ 멀티 서보 블록 정의 (복사 버튼 포함) */
+  {
+    "type":"multi_servo",
+    "message0":"멀티 서보 (개수: %1)  %2 %3",
+    "args0":[
+      { "type":"field_label_serializable", "name":"COUNT", "text":"0" },
+      { "type":"field_image", "name":"CFG",
+        "src":"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24'><path fill='%23000' d='M10.325 4.317a1 1 0 0 1 1.35-.447l.162.08l1.028.514a8.9 8.9 0 0 1 1.46-.419l.21-1.146A1 1 0 0 1 15.52 2h2.96a1 1 0 0 1 .986.836l.21 1.146c.514.126 1.007.297 1.46.52l1.029-.515a1 1 0 0 1 1.33.427l1.48 2.564a1 1 0 0 1-.255 1.287l-.94.767c.082.5.124 1.013.124 1.535s-.042 1.035-.124 1.535l.94.767a1 1 0 0 1 .255 1.287l-1.48 2.564a1 1 0 0 1-1.33.427l-1.028-.515a8.9 8.9 0 0 1-1.46.52l-.21 1.145A1 1 0 0 1 18.48 22h-2.96a1 1 0 0 1-.986-.836l-.21-1.145a8.9 8.9 0 0 1-1.459-.419l-1.028.514a1 1 0 0 1-1.35-.447l-1.48-2.564a1 1 0 0 1 .255-1.287l.94-.767A7.91 7.91 0 0 1 10 12c0-.522.042-1.035.124-1.535l-.94-.767a1 1 0 0 1-.255-1.287zM17 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6' /></svg>",
+        "width":20, "height":20, "alt":"설정" },
+      { "type":"field_image", "name":"DUP",
+        "src":"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24'><path fill='%23000' d='M16 1H4a2 2 0 0 0-2 2v12h2V3h12z'/><path fill='%23000' d='M20 5H8a2 2 0 0 0-2 2v14h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2m0 16H8V7h12z'/></svg>",
+        "width":20, "height":20, "alt":"복사" }
+    ],
+    "previousStatement":null, "nextStatement":null, "colour": 30,
+    "extensions": ["multi_servo_cfg"]
+  }
+]);
+
+/* 멀티 서보 확장: 설정 버튼 + 복사 버튼 */
+const multiServoConfigs = new Map(); // blockId -> config({units:[...], bgUrl:""})
+
+function cloneConfigDeep(cfg){
+  return JSON.parse(JSON.stringify(cfg || { bgUrl:'', units:[] }));
+}
+function duplicateMultiServoBlock(srcBlock){
+  const cfgOld = multiServoConfigs.get(srcBlock.id);
+  const cfgNew = cloneConfigDeep(cfgOld || {
+    bgUrl:'',
+    units:[{name:'S1', angle:135, speed:10, power:true, x:12, y:56}]
+  });
+  const pos = srcBlock.getRelativeToSurfaceXY();
+  const newBlock = ws.newBlock('multi_servo');
+  newBlock.initSvg(); newBlock.render();
+  newBlock.moveBy(pos.x + 30, pos.y + 30);
+  multiServoConfigs.set(newBlock.id, cfgNew);
+  newBlock.setFieldValue(String(cfgNew.units?.length || 0), 'COUNT');
+  newBlock.select();
+}
+Blockly.Extensions.register('multi_servo_cfg', function (){
+  const cfgBtn = this.getField('CFG');
+  const dupBtn = this.getField('DUP');
+  if (cfgBtn?.setOnClickHandler) cfgBtn.setOnClickHandler(() => openServoModal(this));
+  if (dupBtn?.setOnClickHandler) dupBtn.setOnClickHandler(() => duplicateMultiServoBlock(this));
+  this.setOnChange(function(){
+    if (this.isDeadOrDying_) multiServoConfigs.delete(this.id);
+  });
+});
+
+/* ================= 식/코드 생성 유틸 ================= */
+function numFromInput(parent, name, def=0){
+  const n = Number(Blockly.JavaScript.valueToCode(parent, name, Blockly.JavaScript.ORDER_NONE) ?? '');
+  return Number.isFinite(n) ? n : def;
+}
+function exprFromBlock(b){
+  if(!b) return '/* cond */';
+  switch(b.type){
+    case 'math_number': return String(b.getFieldValue('NUM'));
+    case 'logic_boolean': return (b.getFieldValue('BOOL')==='TRUE')?'true':'false';
+    case 'logic_negate': return '!(' + exprFromBlock(b.getInputTargetBlock('BOOL')) + ')';
+    case 'logic_operation': {
+      const op = b.getFieldValue('OP')==='AND'?'&&':'||';
+      return '('+exprFromBlock(b.getInputTargetBlock('A'))+' '+op+' '+exprFromBlock(b.getInputTargetBlock('B'))+')';
+    }
+    case 'logic_compare': {
+      const map={EQ:'==',NEQ:'!=',LT:'<',LTE:'<=',GT:'>',GTE:'>='};
+      const op = map[b.getFieldValue('OP')] || '==';
+      return '('+exprFromBlock(b.getInputTargetBlock('A'))+' '+op+' '+exprFromBlock(b.getInputTargetBlock('B'))+')';
+    }
+    case 'math_arithmetic': {
+      const map={ADD:'+',MINUS:'-',MULTIPLY:'*',DIVIDE:'/',POWER:'^'};
+      const op = map[b.getFieldValue('OP')]||'+';
+      const A = exprFromBlock(b.getInputTargetBlock('A'));
+      const B = exprFromBlock(b.getInputTargetBlock('B'));
+      return '('+A+' '+op+' '+B+')';
+    }
+    case 'math_random_int': {
+      const A = exprFromBlock(b.getInputTargetBlock('FROM')) || '0';
+      const B = exprFromBlock(b.getInputTargetBlock('TO')) || '0';
+      return `random(${A}, ${B})`;
+    }
+    case 'in_touch':  return `TOUCH(${b.getFieldValue('PIN')})`;
+    case 'in_xkeypad':return `XKEY(${b.getFieldValue('PIN')}, ${b.getFieldValue('BTN')})`;
+    case 'in_ir_dist':{
+      const d = numFromInput(b,'DIST',10);
+      return `(IR(${b.getFieldValue('PIN')}) <= ${d})`;
+    }
+  }
+  return '/* cond */';
+}
+
+/* 순회/중복 제거 */
+function walkNode(b, list){
+  if(!b) return;
+  switch(b.type){
+    case 'motor12_dd':{
+      const v1=+b.getFieldValue('M1'),v2=+b.getFieldValue('M2'),ms=+b.getFieldValue('MS');
+      list.push({type:'CMD',s:`M12 ${v1} ${v2} ${ms}`}); if(ms>0) list.push({type:'W',args:[ms]}); break; }
+    case 'motor12_in':{
+      const v1=numFromInput(b,'M1',0),v2=numFromInput(b,'M2',0),ms=numFromInput(b,'MS',0);
+      list.push({type:'CMD',s:`M12 ${Math.round(v1)} ${Math.round(v2)} ${Math.round(ms)}`}); if(ms>0) list.push({type:'W',args:[ms]}); break; }
+    case 'motor34_dd':{
+      const v3=+b.getFieldValue('M3'),v4=+b.getFieldValue('M4'),ms=+b.getFieldValue('MS');
+      list.push({type:'CMD',s:`M34 ${v3} ${v4} ${ms}`}); if(ms>0) list.push({type:'W',args:[ms]}); break; }
+    case 'motor34_in':{
+      const v3=numFromInput(b,'M3',0),v4=numFromInput(b,'M4',0),ms=numFromInput(b,'MS',0);
+      list.push({type:'CMD',s:`M34 ${Math.round(v3)} ${Math.round(v4)} ${Math.round(ms)}`}); if(ms>0) list.push({type:'W',args:[ms]}); break; }
+    case 'servo_dd':{
+      const out=b.getFieldValue('OUT'),ang=+b.getFieldValue('ANG'); list.push({type:'CMD',s:`SV ${out} ${Math.round(ang)}`}); break; }
+    case 'servo_in':{
+      const out=b.getFieldValue('OUT'),ang=numFromInput(b,'ANG',90); list.push({type:'CMD',s:`SV ${out} ${Math.round(ang)}`}); break; }
+    case 'servo_slow':{
+      const out=b.getFieldValue('OUT'),del=numFromInput(b,'DELAY',5),ang=numFromInput(b,'ANG',90);
+      list.push({type:'CMD',s:`SVS ${out} ${Math.round(del)} ${Math.round(ang)}`}); break; }
+    case 'melody':{
+      const p=b.getFieldValue('PITCH'),dur=numFromInput(b,'DUR',200),wait=numFromInput(b,'WAIT',250);
+      list.push({type:'CMD',s:`MEL ${p} ${Math.round(dur)} ${Math.round(wait)}`}); if(wait>0) list.push({type:'W',args:[wait]}); break; }
+    case 'led_ctrl':{
+      const t=b.getFieldValue('TGT'),m=b.getFieldValue('MODE'),v=+b.getFieldValue('VAL'); list.push({type:'CMD',s:`LED ${t} ${m} ${v}`}); break; }
+
+    /* 멀티 서보 블록은 설정/메타 전용 → 코드 생성 없음(주석만) */
+    case 'multi_servo':{
+      const cfg = multiServoConfigs.get(b.id);
+      const n = cfg?.units?.length || 0;
+      list.push({type:'CMD', s:`// multi_servo(${n})`});
+      break;
+    }
+
+    case 'repeat_forever':{
+      const inner=[]; const first=b.getInputTargetBlock('DO'); walkChain(first, inner);
+      list.push({type:'LOOP_INF',body:inner}); break; }
+    case 'controls_repeat_ext':{
+      const times=Math.max(0, numFromInput(b,'TIMES',1));
+      const inner=[]; const first=b.getInputTargetBlock('DO'); walkChain(first, inner);
+      list.push({type:'FOR',count:times,body:inner}); break; }
+    case 'controls_if':{
+      const branches=[]; let i=0;
+      while(b.getInput('IF'+i)){
+        const cond = exprFromBlock(b.getInputTargetBlock('IF'+i));
+        const inner=[]; const first=b.getInputTargetBlock('DO'+i); walkChain(first, inner);
+        branches.push({cond, body:inner}); i++;
+      }
+      if(b.getInput('ELSE')){
+        const inner=[]; const first=b.getInputTargetBlock('ELSE'); walkChain(first, inner);
+        branches.push({cond:null, body:inner});
+      }
+      list.push({type:'IF',branches}); break;
+    }
+    case 'wait_seconds':{ const s=numFromInput(b,'SEC',1); if(s>0) list.push({type:'W',args:[s*1000]}); break; }
+    case 'control_wait_until':{ const cond=exprFromBlock(b.getInputTargetBlock('COND')); list.push({type:'WAIT_UNTIL',cond}); break; }
+    case 'control_repeat_until':{
+      const cond=exprFromBlock(b.getInputTargetBlock('COND'));
+      const inner=[]; const first=b.getInputTargetBlock('DO'); walkChain(first, inner);
+      list.push({type:'REPEAT_UNTIL',cond,body:inner}); break; }
+  }
+}
+function walkChain(start, list){ for(let n=start; n; n=n.getNextBlock()) walkNode(n, list); }
+
+function normalizeProgram(list){
+  const out=[];
+  for(const ins of list){
+    if(ins.type==='CMD'){
+      const prev=out[out.length-1];
+      if(prev && prev.type==='CMD' && prev.s===ins.s) continue;
+    }else if(ins.type==='W'){
+      if(!Number.isFinite(ins.args?.[0])||ins.args[0]<=0) continue;
+      const prev=out[out.length-1];
+      if(prev && prev.type==='W'){ prev.args[0]+=ins.args[0]; continue; }
+    }
+    out.push(ins);
+  }
+  return out;
+}
+
+function firstExecutableTopStack(){
+  const tops=ws.getTopBlocks(true);
+  for(const b of tops){
+    if(!b.outputConnection&&(b.nextConnection||b.statementInputCount>0||b.type==='xrobo_start')) return b;
+  }
+  return null;
+}
+
+function blocksToProgram(){
+  const starts=ws.getBlocksByType('xrobo_start',true);
+  let entry=null, startChain=null;
+  if(starts.length){ entry=starts[0]; startChain=entry.getNextBlock(); }
+  else{ entry=firstExecutableTopStack(); startChain=entry; }
+  if(!entry) return [];
+  const prog=[]; walkChain(startChain, prog);
+  return normalizeProgram(prog);
+}
+
+function programToC(prog){
+  const out=['void setup() {','  // TODO: 핀 초기화','}','', 'void loop() {'];
+  const emit=(list,indent='  ')=>{
+    for(const ins of list){
+      if(ins.type==='CMD'){ out.push(`${indent}${ins.s.startsWith('//')?ins.s:`send("${ins.s}");`}`); }
+      else if(ins.type==='W'){ out.push(`${indent}delay(${ins.args[0]});`); }
+      else if(ins.type==='FOR'){ out.push(`${indent}for (int i=0; i<${ins.count}; ++i) {`); emit(ins.body,indent+'  '); out.push(`${indent}}`); }
+      else if(ins.type==='IF'){
+        let first=true;
+        for(const br of ins.branches){
+          out.push(`${indent}${br.cond!==null?(first?'if':'else if'):'else'} ${br.cond!==null?`(${br.cond}) `:''}{`);
+          first=false; emit(br.body,indent+'  '); out.push(`${indent}}`);
+        }
+      }
+      else if(ins.type==='LOOP_INF'){ out.push(`${indent}while(true){`); emit(ins.body,indent+'  '); out.push(`${indent}}`); }
+      else if(ins.type==='WAIT_UNTIL'){ out.push(`${indent}while (!(${ins.cond||'/* cond */'})) { delay(50); }`); }
+      else if(ins.type==='REPEAT_UNTIL'){ out.push(`${indent}while (!(${ins.cond||'/* cond */'})) {`); emit(ins.body,indent+'  '); out.push(`${indent}  delay(50);`); out.push(`${indent}}`); }
+    }
+  };
+  emit(prog,'  '); out.push('}'); return out.join('\n');
+}
+
+/* 코드뷰 갱신 */
+const codeView=document.getElementById('rightTop');
+let refreshTimer=null;
+function refreshCodeDebounced(){ clearTimeout(refreshTimer); refreshTimer=setTimeout(()=>{ codeView.textContent=programToC(blocksToProgram()); },100); }
+ws.addChangeListener(refreshCodeDebounced); refreshCodeDebounced();
+
+/* ================= 헤더/스케일/풀스크린 ================= */
+function applyHeaderHeight(){
+  const px = document.getElementById('appHeader').offsetHeight || 64;
+  document.documentElement.style.setProperty('--headerH', px+'px');
+  setTimeout(()=>Blockly.svgResize(ws), 60);
+}
+function applyUiScaleFromWorkspace(){
+  const s = Math.max(.7, Math.min(1.6, ws.getScale()));
+  document.documentElement.style.setProperty('--uiScale', s);
+  applyHeaderHeight();
+}
+window.addEventListener('resize', applyHeaderHeight);
+document.addEventListener('fullscreenchange', applyHeaderHeight);
+ws.addChangeListener(ev=>{
+  if(ev && ev.type===Blockly.Events.UI && ev.element==='zoom'){ applyUiScaleFromWorkspace(); }
+});
+setInterval(()=>applyUiScaleFromWorkspace(), 200);
+applyUiScaleFromWorkspace();
+applyHeaderHeight();
+
+/* ================= BLE & 실행 & 실시간 ================= */
+const SERVICE_UUID=0xFFF0;
+let bleDevice=null,bleServer=null,bleService=null,writeChar=null,notifyChar=null;
+let connectToken=0;
+let runToken=0;
+let isConnected=false, isRunning=false;
+let realTime=false; // ★ 실시간 전송
+
+const $=id=>document.getElementById(id);
+const log=m=>{ const L=$('log'); L.textContent+=m+"\n"; L.scrollTop=L.scrollHeight; };
+const btnConnect=$('connectToggle'), btnRun=$('runToggle'), dot=$('statusDot');
+const btnRt=$('rtToggle');
+const enc=s=>new TextEncoder().encode(s);
+
+function resetBleRefs(){ bleDevice=null; bleServer=null; bleService=null; writeChar=null; notifyChar=null; }
+function setConnected(v){
+  isConnected=v;
+  btnConnect.textContent=v?'해제':'연결';
+  btnRun.disabled=!v;
+  dot.classList.toggle('on',v); dot.classList.toggle('off',!v);
+  dot.textContent=v?'on':'off';
+  if(!v) setRunning(false);
+}
+function setRunning(v){
+  isRunning=v;
+  btnRun.textContent=v?'■ 정지':'▶ 실행';
+  btnRun.style.background = v ? '#ef4444' : '#16a34a';
+}
+function setRealtime(on){
+  realTime=!!on;
+  btnRt.classList.toggle('on', realTime);
+  btnRt.textContent = realTime ? '실시간: ON' : '실시간: OFF';
+}
+btnRt.addEventListener('click', ()=> setRealtime(!realTime));
+
+async function sendImmediate(s){
+  if(!realTime) return;
+  if(!writeChar) return;
+  try{ await writeChar.writeValue(enc(s+'\n')); log('➡️ '+s); }
+  catch(e){ console.error(e); log('⚠️ 전송 실패: '+e); }
+}
+
+function onDisconnected(ev){
+  if(bleDevice && ev?.target && ev.target !== bleDevice) return;
+  log('🔌 해제됨');
+  setConnected(false); resetBleRefs();
+}
+
+async function connectBLE(){
+  if(!navigator.bluetooth){ alert('이 브라우저는 Web Bluetooth 미지원입니다.'); return; }
+  const myToken=++connectToken;
+  try{
+    const dev = await navigator.bluetooth.requestDevice({
+      filters:[{ namePrefix:'XROBO' }],
+      optionalServices:[SERVICE_UUID, 0xFFF3, 0xFFF4]
+    });
+    if(connectToken!==myToken) return;
+    try{ bleDevice?.removeEventListener('gattserverdisconnected', onDisconnected); }catch(_){}
+    resetBleRefs();
+    bleDevice=dev;
+    bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+    bleServer=await bleDevice.gatt.connect();
+    if(connectToken!==myToken) return;
+    bleService=await bleServer.getPrimaryService(SERVICE_UUID);
+
+    try{ writeChar=await bleService.getCharacteristic(0xFFF3);}catch(_){}
+    try{ notifyChar=await bleService.getCharacteristic(0xFFF4);}catch(_){}
+    if(!writeChar || notifyChar==null){
+      const cs=await bleService.getCharacteristics();
+      for(const ch of cs){
+        const p=ch.properties;
+        if(!writeChar && (p.write||p.writeWithoutResponse)) writeChar=ch;
+        if(!notifyChar && p.notify) notifyChar=ch;
+      }
+    }
+    if(!writeChar) throw new Error('write 특성을 찾지 못했습니다.');
+    if(notifyChar){
+      await notifyChar.startNotifications();
+      notifyChar.addEventListener('characteristicvaluechanged',ev=>{
+        const v=new TextDecoder().decode(ev.target.value); log('⬅️ '+v);
+      });
+    }
+    if(connectToken!==myToken) return;
+    setConnected(true);
+    log('✅ 연결: '+(dev.name||'(이름 없음)'));
+  }catch(e){
+    console.error(e); log('❌ 연결 실패: '+e);
+    setConnected(false); resetBleRefs();
+  }
+}
+function disconnectBLE(){
+  try{ bleDevice?.gatt?.disconnect(); }catch(_){}
+  setConnected(false); resetBleRefs(); ++connectToken;
+}
+btnConnect.onclick = ()=>{ isConnected ? disconnectBLE() : connectBLE(); };
+
+/* 실행 루프 */
+async function sendCmdIfActive(s, myRun){
+  if(myRun.canceled()) return;
+  if(!writeChar) throw new Error('BLE 미연결');
+  await writeChar.writeValue(enc(s+'\n'));
+  log('➡️ '+s);
+}
+async function sleepCancelable(ms, myRun){
+  let remain = Math.max(0, ms);
+  while(remain > 0){
+    if(myRun.canceled()) return;
+    const slice = Math.min(50, remain);
+    await new Promise(r=>setTimeout(r, slice));
+    remain -= slice;
+  }
+}
+btnRun.onclick = async ()=>{
+  if(!isRunning){
+    if(!writeChar){ alert('먼저 BLE 연결!'); return; }
+    setRunning(true);
+    const prog = blocksToProgram();
+    if(!prog.length){ alert('실행할 블록이 없습니다.\n"XROBO start" 또는 최상단 스택을 배치하세요.'); setRunning(false); return; }
+    const myRunId = ++runToken;
+    const myRun = { canceled: ()=> myRunId !== runToken || !isRunning };
+
+    const runLoop = async(list)=>{
+      for(let i=0;i<list.length;i++){
+        if(myRun.canceled()) return;
+        const ins=list[i];
+        if(ins.type==='CMD'){
+          await sendCmdIfActive(ins.s, myRun);
+        }else if(ins.type==='W'){
+          await sleepCancelable(ins.args[0], myRun);
+        }else if(ins.type==='FOR'){
+          for(let k=0; k<ins.count; k++){
+            if(myRun.canceled()) return;
+            await runLoop(ins.body);
+          }
+        }else if(ins.type==='IF'){
+          /* 웹 런타임 조건평가 없음 */
+        }else if(ins.type==='WAIT_UNTIL'){
+          await sleepCancelable(50, myRun); i--;
+        }else if(ins.type==='REPEAT_UNTIL'){
+          let guard=0;
+          while(!myRun.canceled() && guard<200){
+            await runLoop(ins.body);
+            await sleepCancelable(50, myRun);
+            guard++;
+          }
+        }else if(ins.type==='LOOP_INF'){
+          while(!myRun.canceled()){
+            await runLoop(ins.body);
+          }
+        }
+      }
+    };
+    try{ await runLoop(prog); }
+    catch(e){ console.error(e); log('⚠️ 실행 오류: '+e); }
+    finally{ if(!myRun.canceled()) setRunning(false); }
+  }else{
+    setRunning(false);
+    runToken++;
+    try{ if(writeChar) await writeChar.writeValue(enc('S\n')); }catch(_){}
+  }
+};
+
+/* 실행창 토글 핸들 */
+const panelHandle=document.getElementById('panelHandle');
+function syncHandle(){
+  const collapsed = document.body.classList.contains('panel-collapsed');
+  panelHandle.classList.toggle('open',   !collapsed);
+  panelHandle.classList.toggle('closed',  collapsed);
+  panelHandle.title = collapsed ? '실행창 열기' : '실행창 닫기';
+}
+function togglePanel(){ document.body.classList.toggle('panel-collapsed'); syncHandle(); setTimeout(()=>Blockly.svgResize(ws),60); }
+panelHandle.addEventListener('click', togglePanel);
+syncHandle();
+
+/* 전체화면 토글 */
+const fsBtn=document.getElementById('fsBtn');
+async function enterFS(){ const el=document.documentElement; if(el.requestFullscreen) await el.requestFullscreen(); }
+async function exitFS(){ if(document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen(); }
+function syncFSLabel(){
+  const a = !!document.fullscreenElement;
+  document.body.classList.toggle('fs-active', a);
+  fsBtn.textContent = a ? '화면축소' : '전체화면';
+  fsBtn.title = a ? '화면 축소로 전환' : '전체화면으로 전환';
+  applyHeaderHeight();
+}
+fsBtn.onclick=async()=>{ if(document.fullscreenElement) await exitFS(); else await enterFS(); };
+document.addEventListener('fullscreenchange', syncFSLabel);
+syncFSLabel();
+
+/* ================= 멀티 서보 설정 모달 구현 ================= */
+const servoModal = document.getElementById('servoModal');
+const boardEl = document.getElementById('board');
+const addServoBtn = document.getElementById('addServoBtn');
+const applyBgBtn = document.getElementById('applyBg');
+const bgUrlInput = document.getElementById('bgUrl');
+const closeModalBtn = document.getElementById('closeModal');
+
+let currentBlock = null; // 현재 설정중인 멀티 서보 블록
+let unitSeq = 0;         // 유닛 생성 순서(초기 위치 분산)
+const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
+const toRad=d=>d*Math.PI/180;
+const toDeg=r=>r*180/Math.PI;
+const valToScreenDeg = v => 225 - v;  // 0=225°, 135=90°, 270=315°
+function nearestAngle(target, reference){
+  const c=[target-360, target, target+360]; let best=c[0], bd=Math.abs(c[0]-reference);
+  for(const x of c){ const d=Math.abs(x-reference); if(d<bd){ bd=d; best=x; } } return best;
+}
+function projectToArcWithSide(rawDeg, dx, lastScrDeg){
+  let a = ((rawDeg%360)+360)%360; if(a>180) a-=360;
+  a = nearestAngle(a, lastScrDeg);
+  if(a >= -45 && a <= 225) return a;
+  return dx >= 0 ? -45 : 225;
+}
+
+/* 유닛 생성/이벤트 */
+function createUnit(state){
+  const {name, x, y} = state;
+  const unit = document.createElement('div');
+  unit.className='unit'; unit.style.left=(x||10)+'px'; unit.style.top=(y||48)+'px'; unit.dataset.name=name;
+
+  // 헤더 + 토글
+  const handle = document.createElement('div'); handle.className='handle'; handle.textContent=name;
+  const pwrTop = document.createElement('div'); pwrTop.className='pwr-top'+(state.power? '' : ' off'); pwrTop.textContent=state.power?'ON':'OFF';
+  handle.appendChild(pwrTop); unit.appendChild(handle);
+
+  // 행(각도/속도)
+  const row = document.createElement('div'); row.className='row';
+  const num = document.createElement('div'); num.className='numbox';
+  const inp = document.createElement('input'); inp.type='number'; inp.min='0'; inp.max='270'; inp.step='1'; inp.value=String(state.angle ?? 135);
+  num.appendChild(inp);
+  const spdBox = document.createElement('div'); spdBox.className='speedbox';
+  const spdSel = document.createElement('select');
+  for(let i=1;i<=20;i++){ const o=document.createElement('option'); o.value=String(i); o.textContent=String(i); spdSel.appendChild(o); }
+  spdSel.value = String(state.speed ?? 10);
+  spdBox.appendChild(spdSel);
+  row.append(num, spdBox); unit.appendChild(row);
+
+  // 다이얼
+  const svgNS='http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS,'svg');
+  svg.setAttribute('class','dial-svg'); svg.setAttribute('viewBox','0 0 100 100'); svg.setAttribute('tabindex','0');
+
+  const defs = document.createElementNS(svgNS,'defs');
+  const gradId='gDot_'+name;
+  const grad=document.createElementNS(svgNS,'radialGradient');
+  grad.setAttribute('id',gradId); grad.setAttribute('cx','30%'); grad.setAttribute('cy','30%');
+  let s1=document.createElementNS(svgNS,'stop'); s1.setAttribute('offset','0%'); s1.setAttribute('stop-color','#e0edff');
+  let s2=document.createElementNS(svgNS,'stop'); s2.setAttribute('offset','45%'); s2.setAttribute('stop-color','#93c5fd');
+  let s3=document.createElementNS(svgNS,'stop'); s3.setAttribute('offset','100%'); s3.setAttribute('stop-color','#3b82f6');
+  grad.append(s1,s2,s3); defs.appendChild(grad); svg.appendChild(defs);
+
+  const ring=document.createElementNS(svgNS,'circle');
+  ring.setAttribute('class','ring-base'); ring.setAttribute('cx','50'); ring.setAttribute('cy','50'); ring.setAttribute('r','40');
+  svg.appendChild(ring);
+
+  const mkTick = ()=>document.createElementNS(svgNS,'line');
+  const tick0=mkTick(), tick135=mkTick(), tick270=mkTick();
+  tick0.setAttribute('class','tick'); tick135.setAttribute('class','tick'); tick270.setAttribute('class','tick');
+  svg.append(tick0,tick135,tick270);
+
+  const dot=document.createElementNS(svgNS,'circle');
+  dot.setAttribute('class','dot blue'); dot.setAttribute('r','5.4'); dot.setAttribute('fill', `url(#${gradId})`);
+  svg.appendChild(dot);
+
+  unit.appendChild(svg);
+  boardEl.appendChild(unit);
+
+  // 내부 상태 합치기
+  state.els = {unit, handle, pwrTop, row, inp, spdSel, svg, ring, tick0, tick135, tick270, dot, gradId};
+  state.lastScrDeg = valToScreenDeg(state.angle ?? 135);
+
+  function layoutTicks(){
+    const R=40, S=2, Rout=R+S/2, OUTSET=3, L=8, R1=Rout+OUTSET, R2=R1+L, CX=50, CY=50;
+    function setTick(el,deg){ const a=toRad(deg);
+      const x1=CX+R1*Math.cos(a), y1=CY-R1*Math.sin(a);
+      const x2=CX+R2*Math.cos(a), y2=CY-R2*Math.sin(a);
+      el.setAttribute('x1',x1); el.setAttribute('y1',y1); el.setAttribute('x2',x2); el.setAttribute('y2',y2);
+    }
+    setTick(state.els.tick0,225); setTick(state.els.tick135,90); setTick(state.els.tick270,315);
+  }
+  function placeDot(){
+    if(!state.els.dot.classList.contains('red')) state.els.dot.setAttribute('fill', `url(#${state.els.gradId})`);
+    const R = 30; // 안쪽 경로
+    const a=toRad(valToScreenDeg(state.angle));
+    const x=50+R*Math.cos(a), y=50-R*Math.sin(a);
+    state.els.dot.setAttribute('cx',x); state.els.dot.setAttribute('cy',y);
+  }
+  function render(){ state.els.inp.value=Math.round(state.angle); state.els.spdSel.value=String(state.speed); placeDot(); }
+  layoutTicks(); render();
+
+  // ON/OFF (모달에서는 드래그 차단)
+  const stopProp = ev => ev.stopPropagation();
+  state.els.pwrTop.addEventListener('mousedown', stopProp);
+  state.els.pwrTop.addEventListener('touchstart', stopProp, {passive:false});
+  state.els.pwrTop.addEventListener('click', ev=>{
+    ev.stopPropagation();
+    state.power = !state.power;
+    state.els.pwrTop.classList.toggle('off', !state.power);
+    state.els.pwrTop.textContent = state.power?'ON':'OFF';
+    render();
+    sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`);
+  });
+
+  // 각도/속도
+  state.els.inp.addEventListener('change', ()=>{
+    const v=Number(state.els.inp.value);
+    if(Number.isFinite(v)){ state.angle=clamp(Math.round(v),0,270); render(); sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`); }
+    else render();
+  });
+  state.els.spdSel.addEventListener('change', ()=>{
+    state.speed = clamp(parseInt(state.els.spdSel.value||'10',10)||10,1,20);
+    render(); sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`);
+  });
+
+  // 다이얼
+  function setDotActive(on){
+    state.els.dot.classList.toggle('red', !!on);
+    state.els.dot.classList.toggle('blue', !on);
+    if(!on) state.els.dot.setAttribute('fill', `url(#${state.els.gradId})`);
+  }
+  function pointToVal(clientX, clientY){
+    const r=state.els.svg.getBoundingClientRect();
+    const cx=r.left+r.width/2, cy=r.top+r.height/2;
+    const dx=clientX-cx, dy=cy-clientY;
+    const raw = toDeg(Math.atan2(dy, dx));
+    const scr = projectToArcWithSide(raw, dx, state.lastScrDeg);
+    state.lastScrDeg = scr;
+    return clamp(Math.round(225 - scr), 0, 270);
+  }
+  function dialDown(e){
+    if(!state.power) return;
+    setDotActive(true);
+    const p=('touches' in e)?e.touches[0]:e;
+    state.angle = pointToVal(p.clientX, p.clientY);
+    render(); sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`);
+    window.addEventListener('mousemove', dialMove);
+    window.addEventListener('touchmove', dialMove, {passive:false});
+    window.addEventListener('mouseup', dialUp, {once:true});
+    window.addEventListener('touchend', dialUp, {once:true});
+  }
+  function dialMove(e){
+    if(!state.power) return;
+    const p=('touches' in e)?e.touches[0]:e;
+    if('touches' in e) e.preventDefault();
+    state.angle = pointToVal(p.clientX, p.clientY);
+    render(); sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`);
+  }
+  function dialUp(){
+    setDotActive(false);
+    window.removeEventListener('mousemove', dialMove);
+    window.removeEventListener('touchmove', dialMove);
+  }
+  state.els.svg.addEventListener('mousedown', dialDown);
+  state.els.svg.addEventListener('touchstart', dialDown, {passive:false});
+  state.els.svg.addEventListener('wheel', e=>{
+    if(!state.power) return; e.preventDefault();
+    const d=Math.sign(e.deltaY);
+    state.angle=clamp(state.angle - d*1,0,270); render(); sendImmediate(`SVN ${state.name} ${state.angle} ${state.speed}`);
+  }, {passive:false});
+
+  // 유닛 드래그(헤더로만)
+  function unitDown(e){
+    if(e.currentTarget !== state.els.handle) return;
+    if(e.target.closest('.pwr-top')) return;
+    const rect=state.els.unit.getBoundingClientRect();
+    const p=('touches' in e)?e.touches[0]:e;
+    const dragDx=p.clientX-rect.left, dragDy=p.clientY-rect.top;
+    state.els.unit.classList.add('dragging');
+    const move = ev=>{
+      const q=('touches' in ev)?ev.touches[0]:ev; if('touches' in ev) ev.preventDefault();
+      const b=boardEl.getBoundingClientRect();
+      let nx=q.clientX-b.left-dragDx, ny=q.clientY-b.top-dragDy;
+      nx=clamp(nx,0,b.width-state.els.unit.offsetWidth);
+      ny=clamp(ny,46,b.height-state.els.unit.offsetHeight);
+      state.els.unit.style.left=nx+'px'; state.els.unit.style.top=ny+'px';
+    };
+    const up = ()=>{
+      state.els.unit.classList.remove('dragging');
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('touchmove', move);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('touchmove', move, {passive:false});
+    window.addEventListener('mouseup', up, {once:true});
+    window.addEventListener('touchend', up, {once:true});
+    state.els.unit.style.zIndex = String(Math.floor(Date.now()/1000));
+  }
+  state.els.handle.addEventListener('mousedown', unitDown);
+  state.els.handle.addEventListener('touchstart', unitDown, {passive:false});
+}
+
+/* 모달 열기/닫기/저장 */
+function openServoModal(block){
+  currentBlock = block;
+  boardEl.innerHTML = '';
+  unitSeq = 0;
+
+  let cfg = multiServoConfigs.get(block.id);
+  if(!cfg){
+    cfg = { bgUrl:'', units:[] };
+    multiServoConfigs.set(block.id, cfg);
+  }
+  if(cfg.bgUrl) boardEl.style.backgroundImage = `url("${cfg.bgUrl}")`; else boardEl.style.backgroundImage='';
+  bgUrlInput.value = cfg.bgUrl || '';
+
+  if(cfg.units.length === 0){
+    cfg.units.push({name:'S1', angle:135, speed:10, power:true, x:12, y:56});
+  }
+  cfg.units.forEach(u => createUnit(u));
+
+  setRealtime(realTime);
+  servoModal.classList.add('show');
+  servoModal.setAttribute('aria-hidden','false');
+}
+function closeServoModalAndSave(){
+  if(!currentBlock) return;
+  const cfg = multiServoConfigs.get(currentBlock.id) || {bgUrl:'', units:[]};
+  cfg.bgUrl = bgUrlInput.value.trim();
+  cfg.units = Array.from(boardEl.querySelectorAll('.unit')).map(u=>{
+    const name = u.dataset.name;
+    const inp = u.querySelector('.numbox input');
+    const spd = u.querySelector('.speedbox select');
+    const on  = !u.querySelector('.pwr-top').classList.contains('off');
+    return {
+      name,
+      angle: Number(inp.value)||135,
+      speed: Number(spd.value)||10,
+      power: on,
+      x: parseInt(u.style.left)||10,
+      y: parseInt(u.style.top)||48
+    };
+  });
+  multiServoConfigs.set(currentBlock.id, cfg);
+  currentBlock.setFieldValue(String(cfg.units.length), 'COUNT');
+
+  if(cfg.bgUrl) boardEl.style.backgroundImage = `url("${cfg.bgUrl}")`; else boardEl.style.backgroundImage='';
+
+  servoModal.classList.remove('show');
+  servoModal.setAttribute('aria-hidden','true');
+  currentBlock = null;
+}
+
+/* 모달 버튼들 */
+addServoBtn.addEventListener('click', ()=>{
+  if(!currentBlock) return;
+  const cfg = multiServoConfigs.get(currentBlock.id) || {bgUrl:'', units:[]};
+  const idx = cfg.units.length+1;
+  const name = 'S'+idx;
+  const x = 12 + (unitSeq%8)*16; unitSeq++;
+  const y = 56 + Math.floor(unitSeq/8)*20;
+  const st = {name, angle:135, speed:10, power:true, x, y};
+  cfg.units.push(st);
+  createUnit(st);
+});
+applyBgBtn.addEventListener('click', ()=>{
+  const url=(bgUrlInput.value||'').trim();
+  boardEl.style.backgroundImage = url ? `url("${url}")` : '';
+});
+closeModalBtn.addEventListener('click', closeServoModalAndSave);
+servoModal.addEventListener('click', (e)=>{ if(e.target===servoModal) closeServoModalAndSave(); });
+
+/* ================= 저장 / 불러오기 (버전 호환) ================= */
+const btnSave=$('saveBtn'), btnLoad=$('loadBtn');
+
+/* Blockly XML/Serialization 호환 래퍼 */
+function textToDomCompat(xmlText){
+  if (Blockly.Xml && typeof Blockly.Xml.textToDom === 'function') return Blockly.Xml.textToDom(xmlText);
+  if (Blockly.utils && Blockly.utils.xml && typeof Blockly.utils.xml.textToDom === 'function') return Blockly.utils.xml.textToDom(xmlText);
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, 'text/xml');
+  const perr = doc.getElementsByTagName('parsererror')[0];
+  if (perr) throw new Error('XML 파싱 오류');
+  return doc; // Document 반환
+}
+function domToTextCompat(dom){
+  if (Blockly.Xml && typeof Blockly.Xml.domToText === 'function') return Blockly.Xml.domToText(dom);
+  if (Blockly.utils && Blockly.utils.xml && typeof Blockly.utils.xml.domToText === 'function') return Blockly.utils.xml.domToText(dom);
+  return new XMLSerializer().serializeToString(dom);
+}
+function workspaceToDomCompat(workspace){
+  if (Blockly.Xml && typeof Blockly.Xml.workspaceToDom === 'function') return Blockly.Xml.workspaceToDom(workspace);
+  return null; // 최신 serialization만 있는 빌드일 수 있음
+}
+function domToWorkspaceCompat(dom, workspace){
+  if (Blockly.Xml && typeof Blockly.Xml.domToWorkspace === 'function') return Blockly.Xml.domToWorkspace(dom, workspace);
+  throw new Error('이 Blockly 빌드는 XML 로더(domToWorkspace)를 지원하지 않습니다.');
+}
+function workspaceSaveJsonCompat(workspace){
+  if (Blockly.serialization && Blockly.serialization.workspaces && typeof Blockly.serialization.workspaces.save === 'function'){
+    return Blockly.serialization.workspaces.save(workspace);
+  }
+  return null;
+}
+function workspaceLoadJsonCompat(state, workspace){
+  if (Blockly.serialization && Blockly.serialization.workspaces && typeof Blockly.serialization.workspaces.load === 'function'){
+    Blockly.serialization.workspaces.load(state, workspace);
+    return true;
+  }
+  return false;
+}
+
+function ts(){
+  const d=new Date();
+  const pad=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+function buildProjectPayload(){
+  if(servoModal.classList.contains('show')) closeServoModalAndSave();
+
+  let xmlText = null;
+  const dom = workspaceToDomCompat(ws);
+  if(dom) xmlText = domToTextCompat(dom);
+
+  const jsonState = workspaceSaveJsonCompat(ws); // 일부 빌드 대비 백업
+
+  const entries = {};
+  for(const [k,v] of multiServoConfigs.entries()){
+    entries[k] = { bgUrl: v.bgUrl||'', units: (v.units||[]).map(u=>({
+      name: u.name, angle: u.angle, speed: u.speed, power: !!u.power, x: u.x, y: u.y
+    }))};
+  }
+
+  return {
+    format: 'xrobo-ble-v1',
+    time: new Date().toISOString(),
+    workspaceXml: xmlText,      // 선호
+    workspaceJson: jsonState,   // 백업
+    multiServoConfigs: entries,
+    ui: { realTime }
+  };
+}
+function fallbackDownload(filename, text, type='application/json'){
+  const blob=new Blob([text],{type});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+}
+
+async function saveProject(){
+  try{
+    const data = buildProjectPayload();
+    const json = JSON.stringify(data, null, 2);
+    const defaultName = `xrobo_project_${ts()}.xrobo.json`;
+
+    if(window.showSaveFilePicker){
+      const handle = await window.showSaveFilePicker({
+        suggestedName: defaultName,
+        types: [{
+          description: 'XROBO Project',
+          accept: { 'application/json': ['.xrobo.json'] }
+        }]
+      });
+      const stream = await handle.createWritable();
+      await stream.write(json);
+      await stream.close();
+      log('💾 저장 완료');
+    }else{
+      const name = prompt('저장 파일명을 입력하세요 (.xrobo.json 포함)', defaultName) || defaultName;
+      fallbackDownload(name, json);
+      log('💾 저장 완료(폴백)');
+    }
+  }catch(err){
+    console.error(err);
+    alert('저장 실패: '+(err?.message||err));
+  }
+}
+
+async function loadProject(){
+  if(servoModal.classList.contains('show')){
+    servoModal.classList.remove('show');
+    servoModal.setAttribute('aria-hidden','true');
+    currentBlock=null;
+  }
+
+  try{
+    let file;
+    if(window.showOpenFilePicker){
+      const [handle] = await window.showOpenFilePicker({
+        types: [{
+          description: 'XROBO Project',
+          accept: { 'application/json': ['.xrobo.json', '.json'] }
+        }],
+        multiple: false
+      });
+      file = await handle.getFile();
+    }else{
+      file = await new Promise((resolve, reject)=>{
+        const inp=document.createElement('input');
+        inp.type='file';
+        inp.accept='.xrobo.json,application/json,text/json';
+        inp.onchange=async (e)=>{
+          const f=e.target.files?.[0];
+          if(f) resolve(f); else reject(new Error('파일이 선택되지 않았습니다.'));
+        };
+        inp.click();
+      });
+    }
+
+    const txt = await file.text();
+    const data = JSON.parse(txt);
+
+    if(!data || data.format!=='xrobo-ble-v1'){
+      throw new Error('프로젝트 파일 형식이 올바르지 않습니다.');
+    }
+
+    // 초기화
+    ws.clear();
+    multiServoConfigs.clear();
+
+    // 1) XML 우선 로드
+    let loaded = false;
+    if (data.workspaceXml && typeof data.workspaceXml === 'string'){
+      try{
+        const dom = textToDomCompat(data.workspaceXml);
+        domToWorkspaceCompat(dom, ws);
+        loaded = true;
+      }catch(e){
+        console.warn('XML 로드 실패, JSON으로 폴백 시도:', e);
+      }
+    }
+    // 2) JSON 백업 로드
+    if(!loaded && data.workspaceJson){
+      if(!workspaceLoadJsonCompat(data.workspaceJson, ws)){
+        throw new Error('이 Blockly 빌드는 JSON 로더를 지원하지 않습니다.');
+      }
+      loaded = true;
+    }
+    if(!loaded){
+      throw new Error('워크스페이스를 복원할 수 없습니다.');
+    }
+
+    // 멀티 서보 설정 복원
+    if(Array.isArray(data.multiServoConfigs)){
+      for(const [id, cfg] of data.multiServoConfigs){
+        multiServoConfigs.set(id, cfg);
+      }
+    }else if (data.multiServoConfigs && typeof data.multiServoConfigs==='object'){
+      for(const [id, cfg] of Object.entries(data.multiServoConfigs)){
+        multiServoConfigs.set(id, cfg);
+      }
+    }
+
+    // COUNT 라벨 동기화
+    ws.getAllBlocks(false).forEach(b=>{
+      if(b.type==='multi_servo'){
+        const n=(multiServoConfigs.get(b.id)?.units?.length)||0;
+        b.setFieldValue(String(n), 'COUNT');
+      }
+    });
+
+    // UI 상태 복원(실시간 토글)
+    if(data.ui && typeof data.ui.realTime === 'boolean'){
+      setRealtime(data.ui.realTime);
+    }
+
+    refreshCodeDebounced();
+    log('📥 불러오기 완료');
+  }catch(err){
+    console.error(err);
+    alert('불러오기 실패: '+(err?.message||err));
+  }
+}
+
+$('saveBtn').addEventListener('click', saveProject);
+$('loadBtn').addEventListener('click', loadProject);
+
+/* ================= 끝 ================= */
+</script>
+</body>
+</html>

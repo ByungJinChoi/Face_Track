@@ -1585,11 +1585,11 @@ const FACE_FAR_EYE_DIST  = 55;   // 이 값보다 작으면 멀리 있음
 const FACE_NEAR_EYE_DIST = 120;  // 이 값보다 크면 가까이 있음
 
 /* ★ 얼굴 방향 판정(필요시 조절) ★ */
-const YAW_TH = 0.26; // 좌/우 민감도(0~1)
+const YAW_TH = 0.36; // 좌/우 민감도(0~1)
 
 /* ★★★ 정면(특히 위/아래) 범위 +10%: 위/아래 민감도 낮추기 ★★★ */
 const FRONT_UPDOWN_DEADZONE_BOOST = 1.10;
-const PITCH_Z_TH = 0.03 * FRONT_UPDOWN_DEADZONE_BOOST; // 기존 0.03 → 0.033
+const PITCH_Z_TH = 0.1 * FRONT_UPDOWN_DEADZONE_BOOST; // 기존 0.03 → 0.033
 const PITCH_Z_SCALE = 0.09; // z 정규화 스케일(유지)
 
 let camStream = null, camOn = false, camRAF = null;
@@ -2815,3 +2815,4 @@ function stopOverlayEyes(){
 </script>
 </body>
 </html>
+
